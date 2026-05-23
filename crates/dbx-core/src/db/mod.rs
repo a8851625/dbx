@@ -5,6 +5,7 @@ pub mod elasticsearch_driver;
 pub mod file_validator;
 pub mod mongo_driver;
 pub mod mysql;
+pub mod native_oracle;
 pub mod ob_oracle;
 pub mod postgres;
 pub mod proxy_tunnel;
