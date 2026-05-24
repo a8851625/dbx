@@ -5,6 +5,10 @@ node_modules/
 .superpowers/
 .mcp.json
 
+# Python
+__pycache__/
+*.pyc
+
 # Build output
 dist/
 coverage/
