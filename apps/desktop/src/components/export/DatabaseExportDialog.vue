@@ -219,7 +219,16 @@ async function startExport() {
       if (progress.status === "Done") {
         exportDone.value = true;
         isExporting.value = false;
-        toast(t("databaseExport.exportSuccess"), 3000);
+        if (isTauriRuntime()) {
+          toast(t("databaseExport.exportSuccess"), 3000);
+        } else {
+          const downloadUrl = `/api/export/database/download/${encodeURIComponent(exportId.value)}`;
+          const anchor = document.createElement("a");
+          anchor.href = downloadUrl;
+          anchor.download = filePath.split(/[\\/]/).pop() || "database-export.sql";
+          anchor.click();
+          toast(t("databaseExport.exportSuccess"), 3000);
+        }
       } else if (progress.status === "Error") {
         exportError.value = progress.error;
         isExporting.value = false;

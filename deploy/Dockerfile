@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Stage 1: Build frontend (native, no emulation)
-FROM --platform=$BUILDPLATFORM node:20-slim AS frontend
+FROM --platform=$BUILDPLATFORM node:22-slim AS frontend
 WORKDIR /app
 RUN npm i -g pnpm
 COPY package.json pnpm-lock.yaml ./

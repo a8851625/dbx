@@ -65,6 +65,7 @@ async fn main() {
         password_hash: RwLock::new(password_hash),
         sessions: RwLock::new(HashSet::new()),
         sse_channels: RwLock::new(HashMap::new()),
+        export_downloads: RwLock::new(HashMap::new()),
         login_rate_limit: tokio::sync::Mutex::new(state::LoginRateLimit { fail_count: 0, locked_until: None }),
     });
 
@@ -240,6 +241,7 @@ async fn main() {
         // Database export
         .route("/export/database", post(routes::database_export::start_database_export))
         .route("/export/database/progress/{exportId}", get(routes::database_export::database_export_progress))
+        .route("/export/database/download/{exportId}", get(routes::database_export::download_database_export))
         .route("/export/database/cancel", post(routes::database_export::cancel_database_export))
         // SQL file
         .route("/sql-file/preview", post(routes::sql_file::preview_sql_file))

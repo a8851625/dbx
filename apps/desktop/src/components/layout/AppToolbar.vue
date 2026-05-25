@@ -72,7 +72,7 @@ const { isMac, isDesktop, showControls, isMaximized, isFullscreen, minimize, tog
   useWindowControls();
 
 function onToolbarDblClick(e: MouseEvent) {
-  if (isDesktop) return;
+  if (!isDesktop) return;
   const target = e.target as HTMLElement;
   if (target.closest("button, [role='button'], a")) return;
   toggleMaximize();
@@ -147,7 +147,6 @@ function onToolbarDblClick(e: MouseEvent) {
     </Button>
 
     <Button
-      v-if="isDesktop"
       variant="ghost"
       size="sm"
       class="h-8 px-2 text-xs gap-1"

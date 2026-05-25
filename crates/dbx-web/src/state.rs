@@ -9,12 +9,19 @@ pub struct LoginRateLimit {
     pub locked_until: Option<std::time::Instant>,
 }
 
+#[derive(Clone)]
+pub struct ExportDownload {
+    pub path: PathBuf,
+    pub download_name: String,
+}
+
 pub struct WebState {
     pub app: Arc<AppState>,
     pub data_dir: PathBuf,
     pub password_hash: RwLock<Option<String>>,
     pub sessions: RwLock<HashSet<String>>,
     pub sse_channels: RwLock<HashMap<String, broadcast::Sender<String>>>,
+    pub export_downloads: RwLock<HashMap<String, ExportDownload>>,
     pub login_rate_limit: Mutex<LoginRateLimit>,
 }
 

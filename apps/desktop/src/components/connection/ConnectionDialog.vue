@@ -516,7 +516,15 @@ const dbOptions = [
   { value: "custom_postgres", label: "Custom (PostgreSQL)" },
 ];
 
-const dbCategories = computed<DbCategory[]>(() => [{ key: "all", title: "", options: dbOptions }]);
+const desktopOnlyDbOptionValues = new Set(["sqlite", "duckdb", "access"]);
+
+const dbCategories = computed<DbCategory[]>(() => [
+  {
+    key: "all",
+    title: "",
+    options: dbOptions.filter((option) => isDesktop || !desktopOnlyDbOptionValues.has(option.value)),
+  },
+]);
 
 const filteredDbCategories = computed<DbCategory[]>(() => {
   const keyword = dbSearchQuery.value.trim().toLowerCase();
