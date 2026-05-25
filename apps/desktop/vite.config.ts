@@ -49,6 +49,10 @@ export default defineConfig(async () => ({
         }
       : undefined,
     proxy: isTauri ? undefined : {
+      "/api/v1": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
       "/api": {
         target: "http://localhost:4224",
         changeOrigin: true,

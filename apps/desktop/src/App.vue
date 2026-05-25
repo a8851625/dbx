@@ -95,6 +95,9 @@ let updateCheckTimer: ReturnType<typeof setInterval> | undefined;
 const needsAuth = ref(!isDesktop);
 const authenticated = ref(isDesktop);
 const setupRequired = ref(false);
+const authProviderName = ref<string | null>(null);
+const authLoginUrl = ref<string | null>(null);
+const authMockMode = ref(false);
 
 const showConnectionDialog = ref(false);
 const connectionDialogPrefill = ref<ConnectionDeepLinkDraft | null>(null);
@@ -664,6 +667,17 @@ function onLoginSuccess() {
   initApp();
 }
 
+async function loadAuthStatus() {
+  const res = await fetch("/api/v1/auth/status", { credentials: "include" });
+  const data = await res.json();
+  needsAuth.value = data.required;
+  authenticated.value = data.authenticated;
+  setupRequired.value = data.setup_required;
+  authProviderName.value = data.provider_name ?? null;
+  authLoginUrl.value = data.login_url ?? null;
+  authMockMode.value = Boolean(data.mock_mode);
+}
+
 function initApp() {
   const t0 = performance.now();
   console.log("[STARTUP] initApp begin");
@@ -723,11 +737,7 @@ onMounted(async () => {
   }
   if (!isDesktop) {
     try {
-      const res = await fetch("/api/auth/check");
-      const data = await res.json();
-      needsAuth.value = data.required;
-      authenticated.value = data.authenticated;
-      setupRequired.value = data.setup_required;
+      await loadAuthStatus();
     } catch {
       /* server unreachable */
     }
@@ -781,6 +791,9 @@ onUnmounted(() => {
   <LoginPage
     v-if="setupRequired || (needsAuth && !authenticated)"
     :setup-mode="setupRequired"
+    :provider-name="authProviderName"
+    :login-url="authLoginUrl"
+    :mock-mode="authMockMode"
     @authenticated="onLoginSuccess"
   />
   <div v-show="!setupRequired && (!needsAuth || authenticated)">

@@ -2,40 +2,39 @@
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Lock, Loader2, ShieldCheck } from "lucide-vue-next";
+import { Loader2, ShieldCheck } from "lucide-vue-next";
 
 const props = withDefaults(
   defineProps<{
     setupMode?: boolean;
+    providerName?: string | null;
+    loginUrl?: string | null;
+    mockMode?: boolean;
   }>(),
-  { setupMode: false },
+  { setupMode: false, providerName: null, loginUrl: null, mockMode: false },
 );
 
 const emit = defineEmits<{ authenticated: [] }>();
 const { t } = useI18n();
 
-const password = ref("");
-const confirmPassword = ref("");
 const error = ref("");
 const loading = ref(false);
 
 async function submit() {
-  if (props.setupMode && password.value !== confirmPassword.value) {
-    error.value = t("auth.passwordMismatch");
-    return;
-  }
-
   loading.value = true;
   error.value = "";
   try {
-    const url = props.setupMode ? "/api/auth/setup" : "/api/auth/login";
+    const url = props.loginUrl ?? "/api/v1/auth/login";
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: password.value }),
     });
     if (res.ok) {
+      const data = await res.json();
+      if (data.authorization_url) {
+        window.location.assign(data.authorization_url);
+        return;
+      }
       emit("authenticated");
     } else {
       const text = await res.text();
@@ -59,7 +58,7 @@ async function submit() {
         <div class="text-center">
           <h1 class="text-2xl font-bold tracking-tight">DBX</h1>
           <p class="text-sm text-muted-foreground mt-1">
-            {{ setupMode ? t("auth.setupDescription") : t("auth.loginDescription") }}
+            {{ setupMode ? t("auth.setupDescription") : t("auth.oidcLoginDescription") }}
           </p>
         </div>
       </div>
@@ -69,35 +68,21 @@ async function submit() {
           <ShieldCheck class="w-4 h-4" />
           <span>{{ t("auth.setupTitle") }}</span>
         </div>
-        <div class="relative">
-          <Lock class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            v-model="password"
-            type="password"
-            :placeholder="setupMode ? t('auth.newPassword') : t('auth.enterPassword')"
-            class="pl-10 h-11"
-            autocomplete="off"
-            autofocus
-          />
-        </div>
-        <div v-if="setupMode" class="relative">
-          <Lock class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            v-model="confirmPassword"
-            type="password"
-            :placeholder="t('auth.confirmPassword')"
-            class="pl-10 h-11"
-            autocomplete="off"
-          />
+        <div class="rounded-xl border border-border/80 bg-card/60 p-4 text-sm text-muted-foreground">
+          <p class="font-medium text-foreground">{{ props.providerName || t("auth.defaultProviderName") }}</p>
+          <p class="mt-2">{{ t("auth.oidcLoginHint") }}</p>
+          <p v-if="mockMode" class="mt-2 text-xs text-amber-500">{{ t("auth.mockModeHint") }}</p>
         </div>
         <p v-if="error" class="text-sm text-destructive text-center">{{ error }}</p>
-        <Button
-          type="submit"
-          class="w-full h-11 text-sm font-medium"
-          :disabled="loading || !password || (setupMode && !confirmPassword)"
-        >
+        <Button type="submit" class="w-full h-11 text-sm font-medium" :disabled="loading">
           <Loader2 v-if="loading" class="w-4 h-4 animate-spin mr-2" />
-          {{ loading ? t("auth.processing") : setupMode ? t("auth.setPassword") : t("auth.login") }}
+          {{
+            loading
+              ? t("auth.processing")
+              : setupMode
+                ? t("auth.setPassword")
+                : t("auth.loginWithProvider", { provider: props.providerName || t("auth.defaultProviderName") })
+          }}
         </Button>
       </form>
 

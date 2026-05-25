@@ -13,3 +13,7 @@ NAMING_CONVENTION = {
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+# Import models so Alembic can discover metadata.
+from app.models import auth  # noqa: E402,F401
