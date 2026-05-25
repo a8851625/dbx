@@ -238,15 +238,17 @@ function hasPermission(code: string) {
 const canViewConnections = computed(() => hasPermission("menu.connections.view"));
 const canManageConnections = computed(() => hasPermission("datasource.manage"));
 const canExecuteQuery = computed(() => hasPermission("query.execute"));
-const canRunTransfer = computed(() => hasPermission("transfer.execute"));
-const canRunSqlFile = computed(() => hasPermission("sql_file.execute"));
-const canRunSchemaDiff = computed(() => hasPermission("schema.diff"));
-const canRunDataCompare = computed(() => hasPermission("data.compare"));
-const canManageDrivers = computed(() => hasPermission("drivers.manage"));
+const canRunTransfer = computed(() => isDesktop && hasPermission("transfer.execute"));
+const canRunSqlFile = computed(() => isDesktop && hasPermission("sql_file.execute"));
+const canRunSchemaDiff = computed(() => isDesktop && hasPermission("schema.diff"));
+const canRunDataCompare = computed(() => isDesktop && hasPermission("data.compare"));
+const canManageDrivers = computed(() => isDesktop && hasPermission("drivers.manage"));
 const canViewHistory = computed(() => hasPermission("history.view"));
-const canViewApproval = computed(() => hasPermission("approval.ticket.view") || hasPermission("approval.ticket.create"));
+const canViewApproval = computed(
+  () => hasPermission("approval.ticket.view") || hasPermission("approval.ticket.create"),
+);
 const canViewAudit = computed(() => hasPermission("audit.event.view"));
-const canUseAi = computed(() => hasPermission("ai.use"));
+const canUseAi = computed(() => isDesktop && hasPermission("ai.use"));
 const canManageSettings = computed(() => hasPermission("settings.manage"));
 const canExportConnections = computed(() => hasPermission("export.database"));
 const isApprovalAdmin = computed(() => effectiveRoles.value.has("admin"));
@@ -1191,10 +1193,7 @@ onUnmounted(() => {
           :can-create="hasPermission('approval.ticket.create')"
           :can-view-all="isApprovalAdmin"
         />
-        <AuditCenterSheet
-          v-if="showAuditCenter"
-          v-model:open="showAuditCenter"
-        />
+        <AuditCenterSheet v-if="showAuditCenter" v-model:open="showAuditCenter" />
         <Transition name="toast">
           <div
             v-if="toastVisible"

@@ -9,9 +9,8 @@
   },
   "scripts": {
     "dev": "vite --config apps/desktop/vite.config.ts",
-    "dev:tauri": "tauri dev",
     "dev:web": "vite --config apps/desktop/vite.config.ts --port 5173 --mode web",
-    "dev:backend": "RUST_LOG=${RUST_LOG:-info} DBX_PASSWORD=${DBX_PASSWORD:-test} cargo watch -x 'run -p dbx-web'",
+    "dev:backend": "cd backend && python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 4224",
     "build:packages": "pnpm --filter @dbx-app/node-core build && pnpm --filter @dbx-app/cli build && pnpm --filter @dbx-app/mcp-server build",
     "test:packages": "pnpm --filter @dbx-app/node-core test && pnpm --filter @dbx-app/cli test && pnpm --filter @dbx-app/mcp-server test",
     "pack:packages": "rm -rf /tmp/dbx-pack-check && mkdir -p /tmp/dbx-pack-check && pnpm --filter @dbx-app/node-core pack --pack-destination /tmp/dbx-pack-check && pnpm --filter @dbx-app/cli pack --pack-destination /tmp/dbx-pack-check && pnpm --filter @dbx-app/mcp-server pack --pack-destination /tmp/dbx-pack-check",
@@ -22,7 +21,6 @@
     "fmt": "oxfmt \"apps/desktop/src/**/*.{ts,vue}\"",
     "test": "tsx --tsconfig apps/desktop/tsconfig.json --test packages/app-tests/*.test.ts",
     "preview": "vite preview --config apps/desktop/vite.config.ts",
-    "tauri": "tauri",
     "prepare": "husky"
   },
   "dependencies": {

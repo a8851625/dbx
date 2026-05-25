@@ -6,9 +6,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "DBX Enterprise API"
+    app_version: str = "0.5.19-enterprise-web"
     app_env: str = "development"
     app_host: str = "0.0.0.0"
     app_port: int = 8000
+    app_static_dir: str = "/app/static"
     database_url: str = Field(
         default="postgresql+psycopg://dbx:dbx@postgres:5432/dbx_enterprise"
     )

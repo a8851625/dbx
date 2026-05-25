@@ -1010,11 +1010,11 @@ export async function loadAiConfig(): Promise<AiConfig | null> {
 }
 
 export async function loadDesktopSettings(): Promise<DesktopSettings> {
-  return { show_tray_icon: true };
+  return get("/api/desktop-settings");
 }
 
-export async function saveDesktopSettings(_settings: DesktopSettings): Promise<void> {
-  return;
+export async function saveDesktopSettings(settings: DesktopSettings): Promise<void> {
+  return post("/api/desktop-settings", { settings });
 }
 
 export async function loadPinnedTreeNodeIds(): Promise<string[]> {

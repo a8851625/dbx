@@ -15,6 +15,15 @@ from app.models.approval import (
 )
 from app.models.auth import IdentityProvider, OidcAuthRequest, UserIdentity, UserSession
 from app.models.rbac import Permission, ResourcePolicy, Role, RolePermission, UserRoleBinding
+from app.models.runtime_state import (
+    AiConversationState,
+    ConnectionProfile,
+    QueryHistoryEntry,
+    SavedSqlFileState,
+    SavedSqlFolderState,
+    SidebarLayoutState,
+    UserPreference,
+)
 
 __all__ = [
     "AuditEvent",
@@ -29,12 +38,19 @@ __all__ = [
     "ExecutionLock",
     "ExecutionStatementResult",
     "IdentityProvider",
+    "ConnectionProfile",
     "OidcAuthRequest",
     "Permission",
     "QueryAudit",
+    "QueryHistoryEntry",
     "ResourcePolicy",
     "Role",
     "RolePermission",
+    "SavedSqlFileState",
+    "SavedSqlFolderState",
+    "SidebarLayoutState",
+    "AiConversationState",
+    "UserPreference",
     "UserIdentity",
     "UserRoleBinding",
     "UserSession",

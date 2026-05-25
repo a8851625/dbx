@@ -2,34 +2,22 @@ services:
   dbx:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile
-    ports:
-      - "4224:4224"
-    environment:
-      - DBX_ENTERPRISE_API_BASE_URL=http://dbx-enterprise-api:8000
-      - DBX_ENTERPRISE_SESSION_COOKIE_NAME=dbx_enterprise_session
-      - DBX_ENTERPRISE_INTERNAL_TOKEN=dbx-enterprise-internal
-    volumes:
-      - dbx-data:/app/data
-    restart: unless-stopped
-
-  dbx-enterprise-api:
-    build:
-      context: ..
       dockerfile: backend/Dockerfile
     env_file:
       - ../backend/.env.example
     command: >
       sh -c "alembic upgrade head &&
-      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      uvicorn app.main:app --host 0.0.0.0 --port 4224"
     environment:
+      - APP_PORT=4224
+      - APP_STATIC_DIR=/app/static
+      - ENTERPRISE_INTERNAL_TOKEN=dbx-enterprise-internal
       - DBX_WEB_BASE_URL=http://dbx:4224
       - DBX_WEB_INTERNAL_TOKEN=dbx-enterprise-internal
-      - ENTERPRISE_INTERNAL_TOKEN=dbx-enterprise-internal
       - OIDC_REDIRECT_URI=http://localhost:4224/api/v1/auth/callback
       - OIDC_POST_LOGOUT_REDIRECT_URI=http://localhost:4224/login
     ports:
-      - "8000:8000"
+      - "4224:4224"
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,5 +41,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  dbx-data:
   postgres-data:
