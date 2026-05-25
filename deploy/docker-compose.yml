@@ -8,6 +8,7 @@ services:
     environment:
       - DBX_ENTERPRISE_API_BASE_URL=http://dbx-enterprise-api:8000
       - DBX_ENTERPRISE_SESSION_COOKIE_NAME=dbx_enterprise_session
+      - DBX_ENTERPRISE_INTERNAL_TOKEN=dbx-enterprise-internal
     volumes:
       - dbx-data:/app/data
     restart: unless-stopped
@@ -18,6 +19,9 @@ services:
       dockerfile: backend/Dockerfile
     env_file:
       - ../backend/.env.example
+    environment:
+      - DBX_WEB_BASE_URL=http://dbx:4224
+      - DBX_WEB_INTERNAL_TOKEN=dbx-enterprise-internal
     ports:
       - "8000:8000"
     depends_on:

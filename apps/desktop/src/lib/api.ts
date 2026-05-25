@@ -1,6 +1,6 @@
 import { isTauriRuntime } from "./tauriRuntime";
 import type * as TauriModule from "./tauri";
-import type { EnterpriseAccessContext } from "./http";
+import type { ApprovalFlowRecord, ApprovalTicketRecord, CreateApprovalTicketPayload, EnterpriseAccessContext } from "./http";
 
 // ---------------------------------------------------------------------------
 // Lazy backend resolution (avoids top-level await)
@@ -224,6 +224,46 @@ export async function getEnterpriseAccessContext(): Promise<EnterpriseAccessCont
   return backend.getEnterpriseAccessContext();
 }
 
+export async function listApprovalFlows(): Promise<ApprovalFlowRecord[]> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.listApprovalFlows();
+}
+
+export async function listApprovalTickets(scope: "my" | "pending" | "all" = "my"): Promise<ApprovalTicketRecord[]> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.listApprovalTickets(scope);
+}
+
+export async function getApprovalTicket(ticketId: string): Promise<ApprovalTicketRecord> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.getApprovalTicket(ticketId);
+}
+
+export async function createApprovalTicket(payload: CreateApprovalTicketPayload): Promise<ApprovalTicketRecord> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.createApprovalTicket(payload);
+}
+
+export async function submitApprovalTicket(ticketId: string): Promise<ApprovalTicketRecord> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.submitApprovalTicket(ticketId);
+}
+
+export async function approveApprovalTicket(ticketId: string, comment?: string): Promise<ApprovalTicketRecord> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.approveApprovalTicket(ticketId, comment);
+}
+
+export async function rejectApprovalTicket(ticketId: string, comment?: string): Promise<ApprovalTicketRecord> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.rejectApprovalTicket(ticketId, comment);
+}
+
+export async function retryApprovalTicket(ticketId: string): Promise<ApprovalTicketRecord> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.retryApprovalTicket(ticketId);
+}
+
 // ---------------------------------------------------------------------------
 // Re-export all types from tauri.ts (shared between both backends)
 // ---------------------------------------------------------------------------
@@ -267,4 +307,17 @@ export type {
   DatabaseExportRequest,
   ExportProgress,
 } from "./tauri";
-export type { EnterpriseAccessContext, EnterpriseResourcePolicy } from "./http";
+export type {
+  ApprovalActionRecord,
+  ApprovalExecutionJobRecord,
+  ApprovalExecutionStatementRecord,
+  ApprovalFlowRecord,
+  ApprovalFlowStepRecord,
+  ApprovalInstanceRecord,
+  ApprovalInstanceStepRecord,
+  ApprovalStatementRecord,
+  ApprovalTicketRecord,
+  CreateApprovalTicketPayload,
+  EnterpriseAccessContext,
+  EnterpriseResourcePolicy,
+} from "./http";

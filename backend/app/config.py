@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     oidc_mock_email: str = "admin@example.com"
     oidc_mock_name: str = "DBX Administrator"
     oidc_mock_username: str = "admin"
+    dbx_web_base_url: str = "http://dbx:4224"
+    dbx_web_internal_token: str = "dbx-enterprise-internal"
+    approval_scheduler_interval_seconds: int = 15
+    approval_execution_lock_seconds: int = 60 * 30
 
     model_config = SettingsConfigDict(
         env_file=".env",

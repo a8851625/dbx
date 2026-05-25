@@ -32,6 +32,7 @@ pub struct WebState {
     pub export_downloads: RwLock<HashMap<String, ExportDownload>>,
     pub login_rate_limit: Mutex<LoginRateLimit>,
     pub enterprise: Option<EnterpriseBridge>,
+    pub internal_service_token: Option<String>,
 }
 
 impl WebState {

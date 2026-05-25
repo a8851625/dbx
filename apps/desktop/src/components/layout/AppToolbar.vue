@@ -13,6 +13,7 @@ import {
   Bot,
   ArrowLeftRight,
   FileCode,
+  ShieldCheck,
   GitCompareArrows,
   TableProperties,
   Settings,
@@ -57,6 +58,7 @@ defineProps<{
   canRunDataCompare: boolean;
   canManageDrivers: boolean;
   canViewHistory: boolean;
+  canViewApproval: boolean;
   canUseAi: boolean;
   canManageSettings: boolean;
 }>();
@@ -75,6 +77,7 @@ const emit = defineEmits<{
   "open-sql-file": [];
   "open-schema-diff": [];
   "open-data-compare": [];
+  "open-approval": [];
 }>();
 
 const { t } = useI18n();
@@ -165,6 +168,17 @@ function onToolbarDblClick(e: MouseEvent) {
     >
       <TableProperties class="h-3.5 w-3.5" />
       {{ t("dataCompare.title") }}
+    </Button>
+
+    <Button
+      v-if="canViewApproval"
+      variant="ghost"
+      size="sm"
+      class="h-8 px-2 text-xs gap-1"
+      @click="emit('open-approval')"
+    >
+      <ShieldCheck class="h-3.5 w-3.5" />
+      {{ t("toolbar.approvals") }}
     </Button>
 
     <Button

@@ -61,6 +61,7 @@ const QueryHistory = defineAsyncComponent(() => import("@/components/editor/Quer
 const DriverStorePage = defineAsyncComponent(() => import("@/components/config/DriverStoreDialog.vue"));
 const UpdateDialog = defineAsyncComponent(() => import("@/components/layout/UpdateDialog.vue"));
 const LoginPage = defineAsyncComponent(() => import("@/components/auth/LoginPage.vue"));
+const ApprovalCenterSheet = defineAsyncComponent(() => import("@/components/approval/ApprovalCenterSheet.vue"));
 
 type AiAssistantHandle = {
   triggerAction: (action: AiAction, instruction?: string) => void;
@@ -107,6 +108,7 @@ const showSettingsDialog = ref(false);
 const showDriverStore = ref(false);
 const agentDriverUpdateCount = ref(0);
 const showHistory = ref(false);
+const showApprovalCenter = ref(false);
 const showAiPanel = ref(localStorage.getItem("dbx-ai-panel-open") === "true");
 const aiPanelReady = ref(false);
 const { sidebarWidth, aiPanelWidth, historyWidth, startSidebarResize, startAiPanelResize, startHistoryResize } =
@@ -240,9 +242,11 @@ const canRunSchemaDiff = computed(() => hasPermission("schema.diff"));
 const canRunDataCompare = computed(() => hasPermission("data.compare"));
 const canManageDrivers = computed(() => hasPermission("drivers.manage"));
 const canViewHistory = computed(() => hasPermission("history.view"));
+const canViewApproval = computed(() => hasPermission("approval.ticket.view") || hasPermission("approval.ticket.create"));
 const canUseAi = computed(() => hasPermission("ai.use"));
 const canManageSettings = computed(() => hasPermission("settings.manage"));
 const canExportConnections = computed(() => hasPermission("export.database"));
+const isApprovalAdmin = computed(() => effectiveRoles.value.has("admin"));
 
 function permissionDenied() {
   toast(t("auth.permissionDenied"), 3000);
@@ -285,6 +289,12 @@ watch(canViewHistory, (allowed) => {
   }
 });
 
+watch(canViewApproval, (allowed) => {
+  if (!allowed) {
+    showApprovalCenter.value = false;
+  }
+});
+
 function toggleAiPanel() {
   if (!canUseAi.value) {
     permissionDenied();
@@ -315,6 +325,14 @@ function openAiPanel() {
     showAiPanel.value = true;
     localStorage.setItem("dbx-ai-panel-open", "true");
   }
+}
+
+function openApprovalCenter() {
+  if (!canViewApproval.value) {
+    permissionDenied();
+    return;
+  }
+  showApprovalCenter.value = true;
 }
 
 function analyzeHistoryWithAi(entry: HistoryEntry) {
@@ -913,6 +931,7 @@ onUnmounted(() => {
           :can-run-data-compare="canRunDataCompare"
           :can-manage-drivers="canManageDrivers"
           :can-view-history="canViewHistory"
+          :can-view-approval="canViewApproval"
           :can-use-ai="canUseAi"
           :can-manage-settings="canManageSettings"
           @new-connection="setConnectionDialogOpen(true)"
@@ -923,6 +942,7 @@ onUnmounted(() => {
           @open-github="openGitHub"
           @open-settings="showSettingsDialog = true"
           @open-driver-store="showDriverStore = !showDriverStore"
+          @open-approval="openApprovalCenter"
           @check-updates="checkUpdates()"
           @open-transfer="dialogs.showTransferDialog.value = true"
           @open-sql-file="dialogs.showSqlFileDialog.value = true"
@@ -1048,11 +1068,13 @@ onUnmounted(() => {
                 :can-manage-connections="canManageConnections"
                 :can-execute-query="canExecuteQuery"
                 :can-view-history="canViewHistory"
+                :can-view-approval="canViewApproval"
                 :can-import-config="canManageConnections"
                 @open-connection-query="openConnectionQuery"
                 @new-connection="setConnectionDialogOpen(true)"
                 @new-query="newQuery"
                 @show-history="showHistory = true"
+                @show-approval="openApprovalCenter"
                 @import-config="dialogs.onImportClick"
                 @open-github="openGitHub"
                 @open-mcp-guide="openMcpGuide"
@@ -1135,6 +1157,18 @@ onUnmounted(() => {
           @open-latest-release="openLatestRelease"
           @download-and-install="downloadAndInstallUpdate"
           @restart="restartApp"
+        />
+        <ApprovalCenterSheet
+          v-if="showApprovalCenter"
+          v-model:open="showApprovalCenter"
+          :connections="connectionStore.connections"
+          :draft-connection-id="activeTab?.connectionId || connectionStore.activeConnectionId || ''"
+          :draft-database="activeTab?.database || ''"
+          :draft-schema="activeTab?.schema || ''"
+          :draft-sql="activeTab?.mode === 'query' ? selectedSql.trim() || activeTab.sql : ''"
+          :draft-title="activeTab?.title || ''"
+          :can-create="hasPermission('approval.ticket.create')"
+          :can-view-all="isApprovalAdmin"
         />
         <Transition name="toast">
           <div

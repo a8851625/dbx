@@ -13,6 +13,7 @@ defineProps<{
   canManageConnections?: boolean;
   canExecuteQuery?: boolean;
   canViewHistory?: boolean;
+  canViewApproval?: boolean;
   canImportConfig?: boolean;
 }>();
 
@@ -21,6 +22,7 @@ const emit = defineEmits<{
   "new-connection": [];
   "new-query": [];
   "show-history": [];
+  "show-approval": [];
   "import-config": [];
   "open-github": [];
   "open-mcp-guide": [];
@@ -107,6 +109,13 @@ const { t } = useI18n();
               @click="emit('show-history')"
             >
               <History class="h-4 w-4" /> {{ t("history.title") }}
+            </button>
+            <button
+              v-if="canViewApproval"
+              class="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50"
+              @click="emit('show-approval')"
+            >
+              <ShieldCheck class="h-4 w-4" /> {{ t("toolbar.approvals") }}
             </button>
             <button
               v-if="canImportConfig"

@@ -86,6 +86,31 @@ BUILTIN_PERMISSIONS: dict[str, dict[str, str]] = {
         "action": "manage",
         "description": "Open and update local application settings.",
     },
+    "approval.ticket.view": {
+        "resource_type": "approval_ticket",
+        "action": "view",
+        "description": "View submitted approval tickets and approval progress.",
+    },
+    "approval.ticket.create": {
+        "resource_type": "approval_ticket",
+        "action": "create",
+        "description": "Create DDL or DML change tickets.",
+    },
+    "approval.ticket.submit": {
+        "resource_type": "approval_ticket",
+        "action": "submit",
+        "description": "Submit draft change tickets into an approval flow.",
+    },
+    "approval.ticket.approve": {
+        "resource_type": "approval_ticket",
+        "action": "approve",
+        "description": "Approve or reject pending approval steps.",
+    },
+    "approval.ticket.execute": {
+        "resource_type": "approval_ticket",
+        "action": "execute",
+        "description": "Trigger or retry approved change ticket execution jobs.",
+    },
 }
 
 BUILTIN_ROLE_PERMISSIONS: dict[str, set[str]] = {
@@ -104,12 +129,16 @@ BUILTIN_ROLE_PERMISSIONS: dict[str, set[str]] = {
         "history.view",
         "ai.use",
         "settings.manage",
+        "approval.ticket.view",
+        "approval.ticket.create",
+        "approval.ticket.submit",
     },
     "viewer": {
         "menu.connections.view",
         "datasource.browse",
         "export.query",
         "history.view",
+        "approval.ticket.view",
     },
 }
 

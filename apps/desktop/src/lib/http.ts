@@ -117,6 +117,134 @@ export interface EnterpriseAccessContext {
   policies: EnterpriseResourcePolicy[];
 }
 
+export interface ApprovalActionRecord {
+  id: string;
+  actor_user_id: string;
+  action: string;
+  comment?: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ApprovalInstanceStepRecord {
+  id: string;
+  step_no: number;
+  step_name: string;
+  approval_mode: string;
+  approver_type: string;
+  approver_ref: string;
+  rule: Record<string, unknown>;
+  status: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  actions: ApprovalActionRecord[];
+}
+
+export interface ApprovalInstanceRecord {
+  id: string;
+  flow_id: string;
+  status: string;
+  current_step_no?: number | null;
+  started_at: string;
+  finished_at?: string | null;
+  steps: ApprovalInstanceStepRecord[];
+}
+
+export interface ApprovalStatementRecord {
+  id: string;
+  statement_order: number;
+  statement_text: string;
+  statement_type: string;
+  risk_tags: string[];
+  risk_level: string;
+}
+
+export interface ApprovalExecutionStatementRecord {
+  id: string;
+  statement_order: number;
+  statement_text: string;
+  success: boolean;
+  affected_rows?: number | null;
+  duration_ms?: number | null;
+  db_error_code?: string | null;
+  db_error_message?: string | null;
+  result: Record<string, unknown>;
+}
+
+export interface ApprovalExecutionJobRecord {
+  id: string;
+  run_key: string;
+  status: string;
+  executor_type: string;
+  executor_user_id?: string | null;
+  execution_mode: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error_message?: string | null;
+  result_summary: Record<string, unknown>;
+  created_at: string;
+  statements: ApprovalExecutionStatementRecord[];
+}
+
+export interface ApprovalTicketRecord {
+  id: string;
+  ticket_no: string;
+  ticket_type: string;
+  title: string;
+  datasource_id: string;
+  target_database: string;
+  target_schema?: string | null;
+  target_table?: string | null;
+  risk_level: string;
+  sql_text: string;
+  sql_summary?: string | null;
+  submitter_id: string;
+  current_status: string;
+  scheduled_at?: string | null;
+  submitted_at?: string | null;
+  approved_at?: string | null;
+  executed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  statements: ApprovalStatementRecord[];
+  approval_instance?: ApprovalInstanceRecord | null;
+  execution_jobs: ApprovalExecutionJobRecord[];
+  available_actions: string[];
+}
+
+export interface ApprovalFlowStepRecord {
+  id: string;
+  step_no: number;
+  step_name: string;
+  approval_mode: string;
+  approver_type: string;
+  approver_ref: string;
+  rule: Record<string, unknown>;
+}
+
+export interface ApprovalFlowRecord {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  ticket_type: string;
+  match_rule: Record<string, unknown>;
+  enabled: boolean;
+  built_in: boolean;
+  version: number;
+  steps: ApprovalFlowStepRecord[];
+}
+
+export interface CreateApprovalTicketPayload {
+  title: string;
+  datasource_id: string;
+  target_database: string;
+  target_schema?: string | null;
+  target_table?: string | null;
+  sql_text: string;
+  scheduled_at?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -179,6 +307,38 @@ export async function getEnterpriseAccessContext(): Promise<EnterpriseAccessCont
   const res = await fetch("/api/v1/access/me", { credentials: "include" });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+export async function listApprovalFlows(): Promise<ApprovalFlowRecord[]> {
+  return get("/api/v1/approval/flows");
+}
+
+export async function listApprovalTickets(scope: "my" | "pending" | "all" = "my"): Promise<ApprovalTicketRecord[]> {
+  return get(`/api/v1/approval/tickets?scope=${encodeURIComponent(scope)}`);
+}
+
+export async function getApprovalTicket(ticketId: string): Promise<ApprovalTicketRecord> {
+  return get(`/api/v1/approval/tickets/${encodeURIComponent(ticketId)}`);
+}
+
+export async function createApprovalTicket(payload: CreateApprovalTicketPayload): Promise<ApprovalTicketRecord> {
+  return post("/api/v1/approval/tickets", payload);
+}
+
+export async function submitApprovalTicket(ticketId: string): Promise<ApprovalTicketRecord> {
+  return post(`/api/v1/approval/tickets/${encodeURIComponent(ticketId)}/submit`, {});
+}
+
+export async function approveApprovalTicket(ticketId: string, comment?: string): Promise<ApprovalTicketRecord> {
+  return post(`/api/v1/approval/tickets/${encodeURIComponent(ticketId)}/approve`, { comment });
+}
+
+export async function rejectApprovalTicket(ticketId: string, comment?: string): Promise<ApprovalTicketRecord> {
+  return post(`/api/v1/approval/tickets/${encodeURIComponent(ticketId)}/reject`, { comment });
+}
+
+export async function retryApprovalTicket(ticketId: string): Promise<ApprovalTicketRecord> {
+  return post(`/api/v1/approval/tickets/${encodeURIComponent(ticketId)}/retry`, {});
 }
 
 export async function listSystemFonts(): Promise<string[]> {

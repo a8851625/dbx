@@ -17,4 +17,5 @@ class Base(DeclarativeBase):
 
 # Import models so Alembic can discover metadata.
 from app.models import auth  # noqa: E402,F401
+from app.models import approval  # noqa: E402,F401
 from app.models import rbac  # noqa: E402,F401

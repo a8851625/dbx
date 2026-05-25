@@ -1,11 +1,14 @@
+from asyncio import Event, Task, create_task
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.approval import run_due_ticket_scheduler, stop_due_ticket_scheduler
 from app.api.router import api_router
 from app.config import get_settings
 from app.db.session import SessionLocal
+from app.services.approval import ApprovalService
 from app.services.auth import AuthService
 from app.services.authorization import AuthorizationService
 
@@ -15,12 +18,20 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     db = SessionLocal()
+    scheduler_stop = Event()
+    scheduler_task: Task[None] | None = None
     try:
         AuthService(settings).sync_default_provider(db)
         AuthorizationService().sync_builtin_authorization(db)
+        ApprovalService().sync_builtin_flows(db)
+        scheduler_task = create_task(run_due_ticket_scheduler(scheduler_stop))
     finally:
         db.close()
-    yield
+    try:
+        yield
+    finally:
+        if scheduler_task is not None:
+            await stop_due_ticket_scheduler(scheduler_stop, scheduler_task)
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)

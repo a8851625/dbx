@@ -356,12 +356,16 @@ fn matching_policies<'a>(
     database: Option<&str>,
     schema: Option<&str>,
     table: Option<&str>,
-) -> impl Iterator<Item = &'a AccessPolicy> {
-    context.policies.iter().filter(move |policy| {
-        policy.resource_type == "datasource"
-            && (policy.resource_key == "*" || policy.resource_key == datasource_id)
-            && matches_conditions(&policy.conditions, database, schema, table)
-    })
+) -> Vec<&'a AccessPolicy> {
+    context
+        .policies
+        .iter()
+        .filter(|policy| {
+            policy.resource_type == "datasource"
+                && (policy.resource_key == "*" || policy.resource_key == datasource_id)
+                && matches_conditions(&policy.conditions, database, schema, table)
+        })
+        .collect()
 }
 
 fn matches_conditions(conditions: &Value, database: Option<&str>, schema: Option<&str>, table: Option<&str>) -> bool {

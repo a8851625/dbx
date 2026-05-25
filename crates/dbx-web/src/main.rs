@@ -74,6 +74,7 @@ async fn main() {
                 .unwrap_or_else(|_| "dbx_enterprise_session".to_string()),
             client: reqwest::Client::new(),
         }),
+        internal_service_token: std::env::var("DBX_ENTERPRISE_INTERNAL_TOKEN").ok().filter(|value| !value.is_empty()),
     });
 
     // CORS
@@ -134,6 +135,8 @@ async fn main() {
         .route("/query/execute-batch", post(routes::query::execute_batch))
         .route("/query/execute-script", post(routes::query::execute_script))
         .route("/query/execute-in-transaction", post(routes::query::execute_in_transaction))
+        .route("/internal/query/execute-script", post(routes::query::execute_script))
+        .route("/internal/query/execute-in-transaction", post(routes::query::execute_in_transaction))
         .route("/query/analyze-sql-references", post(routes::query::analyze_sql_references))
         .route("/query/find-statement-at-cursor", post(routes::query::find_statement_at_cursor))
         .route("/query/prepare-pagination-plan", post(routes::query::prepare_query_pagination_execution_plan))
@@ -280,7 +283,8 @@ async fn main() {
         .nest("/api", api)
         .layer(DefaultBodyLimit::max(300 * 1024 * 1024))
         .layer(tower_http::trace::TraceLayer::new_for_http())
-        .layer(cors);
+        .layer(cors)
+        .with_state(web_state.clone());
 
     // Static file serving
     if let Ok(static_dir) = std::env::var("DBX_STATIC_DIR") {

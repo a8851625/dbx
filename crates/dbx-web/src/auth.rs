@@ -5,7 +5,7 @@ use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::extract::State;
-use axum::http::{Request, StatusCode};
+use axum::http::{header, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -182,11 +182,29 @@ fn extract_session_token<B>(req: &Request<B>) -> Option<String> {
     None
 }
 
+fn has_valid_internal_token<B>(req: &Request<B>, state: &WebState) -> bool {
+    let Some(expected) = state.internal_service_token.as_deref() else {
+        return false;
+    };
+    req.headers()
+        .get("x-dbx-internal-token")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value == expected)
+        .unwrap_or(false)
+}
+
 pub async fn auth_middleware(
     State(state): State<Arc<WebState>>,
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
+    if req.uri().path().starts_with("/api/internal/") {
+        if has_valid_internal_token(&req, &state) {
+            return next.run(req).await;
+        }
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+
     if let Some(enterprise_bridge) = state.enterprise.as_ref() {
         let path = req.uri().path().to_string();
         if path.starts_with("/api/auth/") {
@@ -221,12 +239,16 @@ pub async fn auth_middleware(
         let permission = match enterprise::permission_for_request(&method, &path) {
             Some(permission) => permission,
             None => {
-                let headers = req.headers().clone();
-                match enterprise::fetch_access_context(enterprise_bridge, &headers).await {
-                    Ok(_) => return next.run(req).await,
-                    Err(reason) if reason == "Authentication required" => {
-                        return StatusCode::UNAUTHORIZED.into_response();
-                    }
+            let mut headers = req.headers().clone();
+            headers.remove(header::COOKIE);
+            if let Some(cookie) = req.headers().get(header::COOKIE) {
+                headers.insert(header::COOKIE, cookie.clone());
+            }
+            match enterprise::fetch_access_context(enterprise_bridge, &headers).await {
+                Ok(_) => return next.run(req).await,
+                Err(reason) if reason == "Authentication required" => {
+                    return StatusCode::UNAUTHORIZED.into_response();
+                }
                     Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
                 }
             }
