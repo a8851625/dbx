@@ -1,6 +1,15 @@
 import { isTauriRuntime } from "./tauriRuntime";
 import type * as TauriModule from "./tauri";
-import type { ApprovalFlowRecord, ApprovalTicketRecord, CreateApprovalTicketPayload, EnterpriseAccessContext } from "./http";
+import type {
+  ApprovalFlowRecord,
+  ApprovalTicketRecord,
+  AuditEventListResponse,
+  CreateApprovalTicketPayload,
+  EnterpriseAccessContext,
+  ListAuditEventsOptions,
+  ListQueryAuditsOptions,
+  QueryAuditListResponse,
+} from "./http";
 
 // ---------------------------------------------------------------------------
 // Lazy backend resolution (avoids top-level await)
@@ -264,6 +273,16 @@ export async function retryApprovalTicket(ticketId: string): Promise<ApprovalTic
   return backend.retryApprovalTicket(ticketId);
 }
 
+export async function listAuditEvents(options: ListAuditEventsOptions = {}): Promise<AuditEventListResponse> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.listAuditEvents(options);
+}
+
+export async function listQueryAudits(options: ListQueryAuditsOptions = {}): Promise<QueryAuditListResponse> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.listQueryAudits(options);
+}
+
 // ---------------------------------------------------------------------------
 // Re-export all types from tauri.ts (shared between both backends)
 // ---------------------------------------------------------------------------
@@ -315,9 +334,15 @@ export type {
   ApprovalFlowStepRecord,
   ApprovalInstanceRecord,
   ApprovalInstanceStepRecord,
+  AuditEventListResponse,
+  AuditEventRecord,
   ApprovalStatementRecord,
   ApprovalTicketRecord,
   CreateApprovalTicketPayload,
   EnterpriseAccessContext,
   EnterpriseResourcePolicy,
+  ListAuditEventsOptions,
+  ListQueryAuditsOptions,
+  QueryAuditListResponse,
+  QueryAuditRecord,
 } from "./http";

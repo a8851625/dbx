@@ -11,9 +11,14 @@ from app.config import get_settings
 from app.db.session import get_db
 from app.models.auth import UserIdentity
 from app.schemas.auth import AuthRedirectResponse, AuthStatusResponse, CurrentUserResponse, LogoutResponse
+from app.services.audit import AuditService
 from app.services.auth import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def get_audit_service() -> AuditService:
+    return AuditService()
 
 
 @router.get("/status", response_model=AuthStatusResponse)
@@ -41,8 +46,10 @@ def auth_status(
 
 @router.post("/login", response_model=AuthRedirectResponse)
 def login(
+    request: Request,
     db: Session = Depends(get_db),
     auth_service: AuthService = Depends(get_auth_service),
+    audit_service: AuditService = Depends(get_audit_service),
 ) -> AuthRedirectResponse:
     if not auth_service.is_auth_enabled():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="OIDC is not configured")
@@ -52,6 +59,18 @@ def login(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Identity provider is unavailable")
 
     context = auth_service.create_authorization_request(db, provider)
+    audit_service.record_event(
+        db,
+        event_type="auth.login.redirect",
+        category="auth",
+        action="login",
+        actor=audit_service.build_actor(request=request),
+        resource_type="identity_provider",
+        resource_id=provider.id,
+        resource_name=provider.name,
+        payload={"provider_id": provider.id, "provider_name": provider.name},
+        commit=True,
+    )
     return AuthRedirectResponse(authorization_url=context.authorization_url)
 
 
@@ -62,6 +81,7 @@ async def callback(
     state: str = Query(...),
     db: Session = Depends(get_db),
     auth_service: AuthService = Depends(get_auth_service),
+    audit_service: AuditService = Depends(get_audit_service),
 ) -> Response:
     provider = auth_service.sync_default_provider(db)
     if provider is None:
@@ -78,6 +98,23 @@ async def callback(
         request=request,
         state=state,
         nonce=auth_request.nonce,
+    )
+    audit_service.record_event(
+        db,
+        event_type="auth.login.succeeded",
+        category="auth",
+        action="login",
+        actor=audit_service.build_actor(user=user, request=request),
+        resource_type="user_session",
+        resource_id=session.id,
+        resource_name=user.email,
+        payload={
+            "provider_id": provider.id,
+            "subject": user.subject,
+            "email": user.email,
+            "session_id": session.id,
+        },
+        commit=True,
     )
 
     settings = get_settings()
@@ -99,10 +136,27 @@ def logout(
     request: Request,
     db: Session = Depends(get_db),
     auth_service: AuthService = Depends(get_auth_service),
+    audit_service: AuditService = Depends(get_audit_service),
 ) -> Response:
     settings = get_settings()
     token = request.cookies.get(settings.session_cookie_name)
+    session_context = auth_service.read_session(db, token)
     auth_service.revoke_session(db, token)
+    audit_service.record_event(
+        db,
+        event_type="auth.logout",
+        category="auth",
+        action="logout",
+        actor=audit_service.build_actor(user=session_context.user if session_context is not None else None, request=request),
+        resource_type="user_session",
+        resource_id=session_context.session.id if session_context is not None else None,
+        resource_name=session_context.user.email if session_context is not None else None,
+        payload={
+            "provider_id": session_context.session.provider_id if session_context is not None else None,
+            "session_id": session_context.session.id if session_context is not None else None,
+        },
+        commit=True,
+    )
     payload = LogoutResponse(logout_url=None)
     if settings.oidc_logout_url:
         query = urlencode({"post_logout_redirect_uri": settings.oidc_post_logout_redirect_uri})

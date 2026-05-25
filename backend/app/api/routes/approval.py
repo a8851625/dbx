@@ -5,7 +5,7 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_authorization_service, get_current_user, require_permission
@@ -25,6 +25,7 @@ from app.schemas.approval import (
     ExecutionJobResponse,
     ExecutionStatementResultResponse,
 )
+from app.services.audit import AuditService
 from app.services.approval import ApprovalService, TicketBundle
 from app.services.authorization import AccessContext, AuthorizationService
 from app.services.execution import ExecutionService
@@ -38,6 +39,10 @@ def get_approval_service() -> ApprovalService:
 
 def get_execution_service() -> ExecutionService:
     return ExecutionService()
+
+
+def get_audit_service() -> AuditService:
+    return AuditService()
 
 
 @router.get("/flows", response_model=list[ApprovalFlowResponse])
@@ -80,11 +85,13 @@ def get_approval_ticket(
 
 @router.post("/tickets", response_model=ChangeTicketResponse)
 def create_approval_ticket(
+    request: Request,
     payload: ApprovalTicketCreateRequest,
     current_user: UserIdentity = Depends(require_permission("approval.ticket.create")),
     db: Session = Depends(get_db),
     authorization_service: AuthorizationService = Depends(get_authorization_service),
     approval_service: ApprovalService = Depends(get_approval_service),
+    audit_service: AuditService = Depends(get_audit_service),
 ) -> ChangeTicketResponse:
     access_context = authorization_service.build_access_context(db, current_user)
     ticket = approval_service.create_ticket(
@@ -100,6 +107,25 @@ def create_approval_ticket(
         sql_text=payload.sql_text,
         scheduled_at=payload.scheduled_at,
     )
+    audit_service.record_event(
+        db,
+        event_type="approval.ticket.created",
+        category="approval",
+        action="create",
+        actor=audit_service.build_actor(user=current_user, request=request),
+        resource_type="change_ticket",
+        resource_id=ticket.id,
+        resource_name=ticket.ticket_no,
+        payload={
+            "ticket_no": ticket.ticket_no,
+            "ticket_type": ticket.ticket_type,
+            "datasource_id": ticket.datasource_id,
+            "target_database": ticket.target_database,
+            "risk_level": ticket.risk_level,
+            "scheduled_at": ticket.scheduled_at.isoformat() if ticket.scheduled_at else None,
+        },
+        commit=True,
+    )
     bundle = approval_service.load_ticket_bundle(db, ticket.id)
     return _serialize_bundle(approval_service, bundle, current_user, access_context)
 
@@ -107,13 +133,31 @@ def create_approval_ticket(
 @router.post("/tickets/{ticket_id}/submit", response_model=ChangeTicketResponse)
 def submit_approval_ticket(
     ticket_id: str,
+    request: Request,
     current_user: UserIdentity = Depends(require_permission("approval.ticket.submit")),
     db: Session = Depends(get_db),
     authorization_service: AuthorizationService = Depends(get_authorization_service),
     approval_service: ApprovalService = Depends(get_approval_service),
+    audit_service: AuditService = Depends(get_audit_service),
 ) -> ChangeTicketResponse:
     access_context = authorization_service.build_access_context(db, current_user)
     transition = approval_service.submit_ticket(db, ticket_id, current_user, access_context, authorization_service)
+    audit_service.record_event(
+        db,
+        event_type="approval.ticket.submitted",
+        category="approval",
+        action="submit",
+        actor=audit_service.build_actor(user=current_user, request=request),
+        resource_type="change_ticket",
+        resource_id=transition.ticket.id,
+        resource_name=transition.ticket.ticket_no,
+        payload={
+            "ticket_no": transition.ticket.ticket_no,
+            "current_status": transition.ticket.current_status,
+            "latest_flow_instance_id": transition.ticket.latest_flow_instance_id,
+        },
+        commit=True,
+    )
     bundle = approval_service.get_visible_bundle(db, transition.ticket.id, current_user, access_context)
     return _serialize_bundle(approval_service, bundle, current_user, access_context)
 
@@ -121,6 +165,7 @@ def submit_approval_ticket(
 @router.post("/tickets/{ticket_id}/approve", response_model=ChangeTicketResponse)
 def approve_approval_ticket(
     ticket_id: str,
+    request: Request,
     payload: ApprovalDecisionRequest,
     background_tasks: BackgroundTasks,
     current_user: UserIdentity = Depends(require_permission("approval.ticket.approve")),
@@ -128,6 +173,7 @@ def approve_approval_ticket(
     authorization_service: AuthorizationService = Depends(get_authorization_service),
     approval_service: ApprovalService = Depends(get_approval_service),
     execution_service: ExecutionService = Depends(get_execution_service),
+    audit_service: AuditService = Depends(get_audit_service),
 ) -> ChangeTicketResponse:
     access_context = authorization_service.build_access_context(db, current_user)
     transition = approval_service.approve_ticket(
@@ -136,6 +182,22 @@ def approve_approval_ticket(
         current_user,
         access_context,
         comment=payload.comment,
+    )
+    audit_service.record_event(
+        db,
+        event_type="approval.ticket.approved",
+        category="approval",
+        action="approve",
+        actor=audit_service.build_actor(user=current_user, request=request),
+        resource_type="change_ticket",
+        resource_id=transition.ticket.id,
+        resource_name=transition.ticket.ticket_no,
+        payload={
+            "ticket_no": transition.ticket.ticket_no,
+            "comment": payload.comment,
+            "should_queue_execution": transition.should_queue_execution,
+        },
+        commit=True,
     )
     if transition.should_queue_execution:
         job = execution_service.ensure_job_for_ticket(
@@ -152,11 +214,13 @@ def approve_approval_ticket(
 @router.post("/tickets/{ticket_id}/reject", response_model=ChangeTicketResponse)
 def reject_approval_ticket(
     ticket_id: str,
+    request: Request,
     payload: ApprovalDecisionRequest,
     current_user: UserIdentity = Depends(require_permission("approval.ticket.approve")),
     db: Session = Depends(get_db),
     authorization_service: AuthorizationService = Depends(get_authorization_service),
     approval_service: ApprovalService = Depends(get_approval_service),
+    audit_service: AuditService = Depends(get_audit_service),
 ) -> ChangeTicketResponse:
     access_context = authorization_service.build_access_context(db, current_user)
     transition = approval_service.reject_ticket(
@@ -166,6 +230,22 @@ def reject_approval_ticket(
         access_context,
         comment=payload.comment,
     )
+    audit_service.record_event(
+        db,
+        event_type="approval.ticket.rejected",
+        category="approval",
+        action="reject",
+        actor=audit_service.build_actor(user=current_user, request=request),
+        resource_type="change_ticket",
+        resource_id=transition.ticket.id,
+        resource_name=transition.ticket.ticket_no,
+        payload={
+            "ticket_no": transition.ticket.ticket_no,
+            "comment": payload.comment,
+            "current_status": transition.ticket.current_status,
+        },
+        commit=True,
+    )
     bundle = approval_service.get_visible_bundle(db, transition.ticket.id, current_user, access_context)
     return _serialize_bundle(approval_service, bundle, current_user, access_context)
 
@@ -173,12 +253,14 @@ def reject_approval_ticket(
 @router.post("/tickets/{ticket_id}/retry", response_model=ChangeTicketResponse)
 def retry_approval_ticket(
     ticket_id: str,
+    request: Request,
     background_tasks: BackgroundTasks,
     current_user: UserIdentity = Depends(require_permission("approval.ticket.execute")),
     db: Session = Depends(get_db),
     authorization_service: AuthorizationService = Depends(get_authorization_service),
     approval_service: ApprovalService = Depends(get_approval_service),
     execution_service: ExecutionService = Depends(get_execution_service),
+    audit_service: AuditService = Depends(get_audit_service),
 ) -> ChangeTicketResponse:
     access_context = authorization_service.build_access_context(db, current_user)
     bundle = approval_service.get_visible_bundle(db, ticket_id, current_user, access_context)
@@ -194,6 +276,18 @@ def retry_approval_ticket(
         executor_user_id=current_user.id,
     )
     db.commit()
+    audit_service.record_event(
+        db,
+        event_type="approval.ticket.retry_requested",
+        category="approval",
+        action="retry",
+        actor=audit_service.build_actor(user=current_user, request=request),
+        resource_type="change_ticket",
+        resource_id=bundle.ticket.id,
+        resource_name=bundle.ticket.ticket_no,
+        payload={"ticket_no": bundle.ticket.ticket_no, "job_id": job.id, "run_key": job.run_key},
+        commit=True,
+    )
     background_tasks.add_task(execution_service.run_job, job.id)
     refreshed = approval_service.get_visible_bundle(db, ticket_id, current_user, access_context)
     return _serialize_bundle(approval_service, refreshed, current_user, access_context)

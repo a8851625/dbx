@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import { FilePlus2, Plus, History, Upload, Database, Search, ShieldCheck, Sparkles } from "lucide-vue-next";
+import { FilePlus2, Plus, History, Upload, Database, Search, ShieldCheck, Sparkles, ScrollText } from "lucide-vue-next";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import { connectionDriverLabel, connectionIconType, connectionOptionSubtitle } from "@/lib/connectionPresentation";
 import type { ConnectionConfig } from "@/types/database";
@@ -14,6 +14,7 @@ defineProps<{
   canExecuteQuery?: boolean;
   canViewHistory?: boolean;
   canViewApproval?: boolean;
+  canViewAudit?: boolean;
   canImportConfig?: boolean;
 }>();
 
@@ -23,6 +24,7 @@ const emit = defineEmits<{
   "new-query": [];
   "show-history": [];
   "show-approval": [];
+  "show-audit": [];
   "import-config": [];
   "open-github": [];
   "open-mcp-guide": [];
@@ -116,6 +118,13 @@ const { t } = useI18n();
               @click="emit('show-approval')"
             >
               <ShieldCheck class="h-4 w-4" /> {{ t("toolbar.approvals") }}
+            </button>
+            <button
+              v-if="canViewAudit"
+              class="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50"
+              @click="emit('show-audit')"
+            >
+              <ScrollText class="h-4 w-4" /> {{ t("toolbar.audit") }}
             </button>
             <button
               v-if="canImportConfig"

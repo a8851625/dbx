@@ -245,6 +245,89 @@ export interface CreateApprovalTicketPayload {
   scheduled_at?: string | null;
 }
 
+export interface AuditEventRecord {
+  id: string;
+  event_type: string;
+  category: string;
+  action: string;
+  outcome: string;
+  actor_user_id?: string | null;
+  actor_email?: string | null;
+  actor_display_name?: string | null;
+  actor_role?: string | null;
+  source_ip?: string | null;
+  user_agent?: string | null;
+  request_path?: string | null;
+  request_method?: string | null;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  resource_name?: string | null;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface QueryAuditRecord {
+  id: string;
+  execution_id?: string | null;
+  actor_user_id?: string | null;
+  actor_email?: string | null;
+  actor_display_name?: string | null;
+  actor_role?: string | null;
+  source_ip?: string | null;
+  user_agent?: string | null;
+  request_path?: string | null;
+  request_method?: string | null;
+  datasource_id: string;
+  database_name: string;
+  schema_name?: string | null;
+  table_name?: string | null;
+  operation_type: string;
+  execution_mode: string;
+  statement_count: number;
+  sql_text: string;
+  sql_summary?: string | null;
+  status: string;
+  duration_ms?: number | null;
+  affected_rows?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface AuditEventListResponse {
+  items: AuditEventRecord[];
+  total: number;
+}
+
+export interface QueryAuditListResponse {
+  items: QueryAuditRecord[];
+  total: number;
+}
+
+export interface ListAuditEventsOptions {
+  limit?: number;
+  offset?: number;
+  category?: string;
+  action?: string;
+  outcome?: string;
+  actor?: string;
+  resourceType?: string;
+  keyword?: string;
+}
+
+export interface ListQueryAuditsOptions {
+  limit?: number;
+  offset?: number;
+  datasourceId?: string;
+  databaseName?: string;
+  status?: string;
+  operationType?: string;
+  actor?: string;
+  keyword?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -339,6 +422,34 @@ export async function rejectApprovalTicket(ticketId: string, comment?: string): 
 
 export async function retryApprovalTicket(ticketId: string): Promise<ApprovalTicketRecord> {
   return post(`/api/v1/approval/tickets/${encodeURIComponent(ticketId)}/retry`, {});
+}
+
+export async function listAuditEvents(options: ListAuditEventsOptions = {}): Promise<AuditEventListResponse> {
+  const query = qs({
+    limit: options.limit,
+    offset: options.offset,
+    category: options.category,
+    action: options.action,
+    outcome: options.outcome,
+    actor: options.actor,
+    resource_type: options.resourceType,
+    keyword: options.keyword,
+  });
+  return get(query ? `/api/v1/audit/events?${query}` : "/api/v1/audit/events");
+}
+
+export async function listQueryAudits(options: ListQueryAuditsOptions = {}): Promise<QueryAuditListResponse> {
+  const query = qs({
+    limit: options.limit,
+    offset: options.offset,
+    datasource_id: options.datasourceId,
+    database_name: options.databaseName,
+    status: options.status,
+    operation_type: options.operationType,
+    actor: options.actor,
+    keyword: options.keyword,
+  });
+  return get(query ? `/api/v1/audit/queries?${query}` : "/api/v1/audit/queries");
 }
 
 export async function listSystemFonts(): Promise<string[]> {

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -85,6 +86,16 @@ BUILTIN_PERMISSIONS: dict[str, dict[str, str]] = {
         "resource_type": "settings",
         "action": "manage",
         "description": "Open and update local application settings.",
+    },
+    "authorization.manage": {
+        "resource_type": "authorization",
+        "action": "manage",
+        "description": "Manage RBAC role bindings and datasource resource policies.",
+    },
+    "audit.event.view": {
+        "resource_type": "audit",
+        "action": "view",
+        "description": "View structured audit events and query audit trails.",
     },
     "approval.ticket.view": {
         "resource_type": "approval_ticket",
@@ -247,6 +258,145 @@ class AuthorizationService:
             return AccessDecision(True)
         return AccessDecision(False, f"Datasource scope denied: {datasource_id}")
 
+    def list_users(self, db: Session) -> list[UserIdentity]:
+        return db.execute(select(UserIdentity).order_by(UserIdentity.email.asc())).scalars().all()
+
+    def list_role_bindings(self, db: Session, *, user_id: str | None = None) -> list[UserRoleBinding]:
+        stmt = select(UserRoleBinding).order_by(UserRoleBinding.created_at.desc())
+        if user_id:
+            stmt = stmt.where(UserRoleBinding.user_id == user_id)
+        return db.execute(stmt).scalars().all()
+
+    def upsert_role_binding(
+        self,
+        db: Session,
+        *,
+        user_id: str,
+        role_code: str,
+        granted_by: str | None,
+        expires_at: datetime | None,
+    ) -> tuple[UserRoleBinding, str]:
+        user = db.get(UserIdentity, user_id)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        role = db.get(Role, role_code)
+        if role is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+
+        binding = db.execute(
+            select(UserRoleBinding).where(
+                UserRoleBinding.user_id == user_id,
+                UserRoleBinding.role_code == role_code,
+            )
+        ).scalar_one_or_none()
+        mutation = "granted" if binding is None else "updated"
+        if binding is None:
+            binding = UserRoleBinding(
+                user_id=user_id,
+                role_code=role_code,
+                granted_by=granted_by,
+                expires_at=expires_at,
+            )
+            db.add(binding)
+        else:
+            binding.granted_by = granted_by
+            binding.expires_at = expires_at
+
+        db.commit()
+        db.refresh(binding)
+        return binding, mutation
+
+    def delete_role_binding(self, db: Session, binding_id: str) -> UserRoleBinding:
+        binding = db.get(UserRoleBinding, binding_id)
+        if binding is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role binding not found")
+        db.delete(binding)
+        db.commit()
+        return binding
+
+    def list_resource_policies(
+        self,
+        db: Session,
+        *,
+        principal_type: str | None = None,
+        principal_ref: str | None = None,
+    ) -> list[ResourcePolicy]:
+        stmt = select(ResourcePolicy).order_by(ResourcePolicy.updated_at.desc(), ResourcePolicy.created_at.desc())
+        if principal_type:
+            stmt = stmt.where(ResourcePolicy.principal_type == principal_type)
+        if principal_ref:
+            stmt = stmt.where(ResourcePolicy.principal_ref == principal_ref)
+        return db.execute(stmt).scalars().all()
+
+    def create_resource_policy(
+        self,
+        db: Session,
+        *,
+        principal_type: str,
+        principal_ref: str,
+        resource_type: str,
+        resource_key: str,
+        permission_code: str | None,
+        effect: str,
+        conditions: dict[str, Any],
+        enabled: bool,
+    ) -> ResourcePolicy:
+        self._validate_policy_fields(db, principal_type=principal_type, permission_code=permission_code, effect=effect)
+        policy = ResourcePolicy(
+            principal_type=principal_type,
+            principal_ref=principal_ref.strip(),
+            resource_type=resource_type.strip(),
+            resource_key=resource_key.strip(),
+            permission_code=permission_code.strip() if permission_code else None,
+            effect=effect,
+            conditions=conditions or {},
+            enabled=enabled,
+        )
+        db.add(policy)
+        db.commit()
+        db.refresh(policy)
+        return policy
+
+    def update_resource_policy(
+        self,
+        db: Session,
+        policy_id: str,
+        *,
+        principal_type: str,
+        principal_ref: str,
+        resource_type: str,
+        resource_key: str,
+        permission_code: str | None,
+        effect: str,
+        conditions: dict[str, Any],
+        enabled: bool,
+    ) -> ResourcePolicy:
+        self._validate_policy_fields(db, principal_type=principal_type, permission_code=permission_code, effect=effect)
+        policy = db.get(ResourcePolicy, policy_id)
+        if policy is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource policy not found")
+
+        policy.principal_type = principal_type
+        policy.principal_ref = principal_ref.strip()
+        policy.resource_type = resource_type.strip()
+        policy.resource_key = resource_key.strip()
+        policy.permission_code = permission_code.strip() if permission_code else None
+        policy.effect = effect
+        policy.conditions = conditions or {}
+        policy.enabled = enabled
+
+        db.commit()
+        db.refresh(policy)
+        return policy
+
+    def delete_resource_policy(self, db: Session, policy_id: str) -> ResourcePolicy:
+        policy = db.get(ResourcePolicy, policy_id)
+        if policy is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource policy not found")
+        db.delete(policy)
+        db.commit()
+        return policy
+
     def _role_codes_for_user(self, db: Session, user: UserIdentity) -> set[str]:
         role_codes = {user.role} if user.role else set()
         now = datetime.now(UTC)
@@ -319,3 +469,18 @@ class AuthorizationService:
         if not isinstance(value, list):
             return set()
         return {str(item).strip() for item in value if str(item).strip()}
+
+    def _validate_policy_fields(
+        self,
+        db: Session,
+        *,
+        principal_type: str,
+        permission_code: str | None,
+        effect: str,
+    ) -> None:
+        if principal_type not in {"user", "role"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="principal_type must be user or role")
+        if effect not in {"allow", "deny"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="effect must be allow or deny")
+        if permission_code and db.get(Permission, permission_code.strip()) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Permission not found")

@@ -1,5 +1,6 @@
 """SQLAlchemy models for DBX enterprise backend."""
 
+from app.models.audit import AuditEvent, QueryAudit
 from app.models.approval import (
     ApprovalAction,
     ApprovalFlow,
@@ -16,6 +17,7 @@ from app.models.auth import IdentityProvider, OidcAuthRequest, UserIdentity, Use
 from app.models.rbac import Permission, ResourcePolicy, Role, RolePermission, UserRoleBinding
 
 __all__ = [
+    "AuditEvent",
     "ApprovalAction",
     "ApprovalFlow",
     "ApprovalFlowStep",
@@ -29,6 +31,7 @@ __all__ = [
     "IdentityProvider",
     "OidcAuthRequest",
     "Permission",
+    "QueryAudit",
     "ResourcePolicy",
     "Role",
     "RolePermission",

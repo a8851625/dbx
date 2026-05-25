@@ -1,9 +1,14 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
-use axum::extract::State;
+use axum::extract::{ConnectInfo, OriginalUri, State};
+use axum::http::HeaderMap;
 use axum::Json;
 use serde::Deserialize;
+use serde_json::{json, Value};
 
+use crate::enterprise::{self, InternalQueryAuditRequest};
 use crate::error::AppError;
 use crate::state::WebState;
 
@@ -240,11 +245,16 @@ pub struct BuildDatabaseSqlExportRequest {
 
 pub async fn execute_query(
     State(state): State<Arc<WebState>>,
+    OriginalUri(uri): OriginalUri,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<ExecuteQueryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let execution_id = req.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let started_at = Instant::now();
+    let execution_id = req.execution_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let result_session_id = req.result_session_id.clone();
 
-    let registered = state.app.running_queries.register(execution_id);
+    let registered = state.app.running_queries.register(execution_id.clone());
     let cancel_token = registered.token();
 
     let result = dbx_core::query::execute_sql_statement_with_options(
@@ -258,23 +268,83 @@ pub async fn execute_query(
             max_rows: req.max_rows,
             fetch_size: req.fetch_size,
             page_size: req.page_size,
-            result_session_id: req.result_session_id,
+            result_session_id,
         },
     )
-    .await
-    .map_err(AppError)?;
+    .await;
 
-    drop(registered);
-    Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+    match result {
+        Ok(result) => {
+            let response_value = serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?;
+            audit_query_execution(
+                &state,
+                &headers,
+                remote_addr,
+                &uri,
+                &req.connection_id,
+                &req.database,
+                req.schema.as_deref(),
+                None,
+                &req.sql,
+                1,
+                "interactive",
+                "immediate",
+                Some(execution_id.clone()),
+                "succeeded",
+                Some(started_at.elapsed().as_millis() as u64),
+                extract_affected_rows(&response_value),
+                None,
+                json!({
+                    "pageSize": req.page_size,
+                    "fetchSize": req.fetch_size,
+                    "maxRows": req.max_rows,
+                    "resultSessionId": req.result_session_id.clone(),
+                }),
+            )
+            .await;
+            drop(registered);
+            Ok(Json(response_value))
+        }
+        Err(error) => {
+            audit_query_execution(
+                &state,
+                &headers,
+                remote_addr,
+                &uri,
+                &req.connection_id,
+                &req.database,
+                req.schema.as_deref(),
+                None,
+                &req.sql,
+                1,
+                "interactive",
+                "immediate",
+                Some(execution_id),
+                "failed",
+                Some(started_at.elapsed().as_millis() as u64),
+                None,
+                Some(error.clone()),
+                json!({}),
+            )
+            .await;
+            drop(registered);
+            Err(AppError(error))
+        }
+    }
 }
 
 pub async fn execute_multi(
     State(state): State<Arc<WebState>>,
+    OriginalUri(uri): OriginalUri,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<ExecuteQueryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let execution_id = req.execution_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let started_at = Instant::now();
+    let execution_id = req.execution_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let result_session_id = req.result_session_id.clone();
 
-    let registered = state.app.running_queries.register(execution_id);
+    let registered = state.app.running_queries.register(execution_id.clone());
     let cancel_token = registered.token();
 
     let result = dbx_core::query::execute_multi_core_with_options(
@@ -288,20 +358,81 @@ pub async fn execute_multi(
             max_rows: req.max_rows,
             fetch_size: req.fetch_size,
             page_size: req.page_size,
-            result_session_id: req.result_session_id,
+            result_session_id,
         },
     )
-    .await
-    .map_err(AppError)?;
+    .await;
 
-    drop(registered);
-    Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+    match result {
+        Ok(result) => {
+            let response_value = serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?;
+            audit_query_execution(
+                &state,
+                &headers,
+                remote_addr,
+                &uri,
+                &req.connection_id,
+                &req.database,
+                req.schema.as_deref(),
+                None,
+                &req.sql,
+                1,
+                "multi",
+                "immediate",
+                Some(execution_id.clone()),
+                "succeeded",
+                Some(started_at.elapsed().as_millis() as u64),
+                extract_affected_rows(&response_value),
+                None,
+                json!({
+                    "pageSize": req.page_size,
+                    "fetchSize": req.fetch_size,
+                    "maxRows": req.max_rows,
+                    "resultSessionId": req.result_session_id.clone(),
+                }),
+            )
+            .await;
+            drop(registered);
+            Ok(Json(response_value))
+        }
+        Err(error) => {
+            audit_query_execution(
+                &state,
+                &headers,
+                remote_addr,
+                &uri,
+                &req.connection_id,
+                &req.database,
+                req.schema.as_deref(),
+                None,
+                &req.sql,
+                1,
+                "multi",
+                "immediate",
+                Some(execution_id),
+                "failed",
+                Some(started_at.elapsed().as_millis() as u64),
+                None,
+                Some(error.clone()),
+                json!({}),
+            )
+            .await;
+            drop(registered);
+            Err(AppError(error))
+        }
+    }
 }
 
 pub async fn execute_batch(
     State(state): State<Arc<WebState>>,
+    OriginalUri(uri): OriginalUri,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<ExecuteBatchRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let started_at = Instant::now();
+    let execution_id = uuid::Uuid::new_v4().to_string();
+    let sql_text = req.statements.join(";\n");
     let result = dbx_core::query::execute_statements(
         &state.app,
         &req.connection_id,
@@ -309,10 +440,59 @@ pub async fn execute_batch(
         &req.statements,
         req.schema.as_deref(),
     )
-    .await
-    .map_err(AppError)?;
+    .await;
 
-    Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+    match result {
+        Ok(result) => {
+            let response_value = serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?;
+            audit_query_execution(
+                &state,
+                &headers,
+                remote_addr,
+                &uri,
+                &req.connection_id,
+                &req.database,
+                req.schema.as_deref(),
+                None,
+                &sql_text,
+                req.statements.len().max(1),
+                "batch",
+                "immediate",
+                Some(execution_id),
+                "succeeded",
+                Some(started_at.elapsed().as_millis() as u64),
+                extract_affected_rows(&response_value),
+                None,
+                json!({}),
+            )
+            .await;
+            Ok(Json(response_value))
+        }
+        Err(error) => {
+            audit_query_execution(
+                &state,
+                &headers,
+                remote_addr,
+                &uri,
+                &req.connection_id,
+                &req.database,
+                req.schema.as_deref(),
+                None,
+                &sql_text,
+                req.statements.len().max(1),
+                "batch",
+                "immediate",
+                Some(execution_id),
+                "failed",
+                Some(started_at.elapsed().as_millis() as u64),
+                None,
+                Some(error.clone()),
+                json!({}),
+            )
+            .await;
+            Err(AppError(error))
+        }
+    }
 }
 
 pub async fn cancel_query(
@@ -336,8 +516,13 @@ pub async fn close_query_session(
 
 pub async fn execute_script(
     State(state): State<Arc<WebState>>,
+    OriginalUri(uri): OriginalUri,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<ExecuteQueryRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let started_at = Instant::now();
+    let execution_id = uuid::Uuid::new_v4().to_string();
     let statements = dbx_core::sql::split_sql_statements(&req.sql);
     let result = dbx_core::query::execute_statements(
         &state.app,
@@ -346,16 +531,71 @@ pub async fn execute_script(
         &statements,
         req.schema.as_deref(),
     )
-    .await
-    .map_err(AppError)?;
+    .await;
 
-    Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+    match result {
+        Ok(result) => {
+            let response_value = serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?;
+            audit_query_execution(
+                &state,
+                &headers,
+                remote_addr,
+                &uri,
+                &req.connection_id,
+                &req.database,
+                req.schema.as_deref(),
+                None,
+                &req.sql,
+                statements.len().max(1),
+                "script",
+                "immediate",
+                Some(execution_id),
+                "succeeded",
+                Some(started_at.elapsed().as_millis() as u64),
+                extract_affected_rows(&response_value),
+                None,
+                json!({}),
+            )
+            .await;
+            Ok(Json(response_value))
+        }
+        Err(error) => {
+            audit_query_execution(
+                &state,
+                &headers,
+                remote_addr,
+                &uri,
+                &req.connection_id,
+                &req.database,
+                req.schema.as_deref(),
+                None,
+                &req.sql,
+                statements.len().max(1),
+                "script",
+                "immediate",
+                Some(execution_id),
+                "failed",
+                Some(started_at.elapsed().as_millis() as u64),
+                None,
+                Some(error.clone()),
+                json!({}),
+            )
+            .await;
+            Err(AppError(error))
+        }
+    }
 }
 
 pub async fn execute_in_transaction(
     State(state): State<Arc<WebState>>,
+    OriginalUri(uri): OriginalUri,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<ExecuteBatchRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    let started_at = Instant::now();
+    let execution_id = uuid::Uuid::new_v4().to_string();
+    let sql_text = req.statements.join(";\n");
     let result = dbx_core::query::execute_statements_in_transaction(
         &state.app,
         &req.connection_id,
@@ -363,10 +603,59 @@ pub async fn execute_in_transaction(
         &req.statements,
         req.schema.as_deref(),
     )
-    .await
-    .map_err(AppError)?;
+    .await;
 
-    Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
+    match result {
+        Ok(result) => {
+            let response_value = serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?;
+            audit_query_execution(
+                &state,
+                &headers,
+                remote_addr,
+                &uri,
+                &req.connection_id,
+                &req.database,
+                req.schema.as_deref(),
+                None,
+                &sql_text,
+                req.statements.len().max(1),
+                "transaction",
+                "transaction",
+                Some(execution_id),
+                "succeeded",
+                Some(started_at.elapsed().as_millis() as u64),
+                extract_affected_rows(&response_value),
+                None,
+                json!({}),
+            )
+            .await;
+            Ok(Json(response_value))
+        }
+        Err(error) => {
+            audit_query_execution(
+                &state,
+                &headers,
+                remote_addr,
+                &uri,
+                &req.connection_id,
+                &req.database,
+                req.schema.as_deref(),
+                None,
+                &sql_text,
+                req.statements.len().max(1),
+                "transaction",
+                "transaction",
+                Some(execution_id),
+                "failed",
+                Some(started_at.elapsed().as_millis() as u64),
+                None,
+                Some(error.clone()),
+                json!({}),
+            )
+            .await;
+            Err(AppError(error))
+        }
+    }
 }
 
 pub async fn analyze_sql_references(
@@ -555,4 +844,72 @@ pub async fn build_database_sql_export(
     Json(req): Json<BuildDatabaseSqlExportRequest>,
 ) -> Result<Json<String>, AppError> {
     dbx_core::database_export::build_database_sql_export(req.options).map(Json).map_err(AppError)
+}
+
+async fn audit_query_execution(
+    state: &WebState,
+    headers: &HeaderMap,
+    remote_addr: SocketAddr,
+    uri: &axum::http::Uri,
+    connection_id: &str,
+    database: &str,
+    schema: Option<&str>,
+    table: Option<&str>,
+    sql_text: &str,
+    statement_count: usize,
+    operation_type: &str,
+    execution_mode: &str,
+    execution_id: Option<String>,
+    status: &str,
+    duration_ms: Option<u64>,
+    affected_rows: Option<u64>,
+    error_message: Option<String>,
+    metadata: Value,
+) {
+    if uri.path().starts_with("/api/internal/") {
+        return;
+    }
+
+    let Some(enterprise) = state.enterprise.as_ref() else {
+        return;
+    };
+
+    let payload = InternalQueryAuditRequest {
+        session_token: enterprise::extract_cookie_value(headers, &enterprise.session_cookie_name),
+        execution_id,
+        datasource_id: connection_id.to_string(),
+        database: database.to_string(),
+        schema: schema.map(str::to_string),
+        table: table.map(str::to_string),
+        operation_type: operation_type.to_string(),
+        execution_mode: execution_mode.to_string(),
+        statement_count,
+        sql_text: sql_text.to_string(),
+        status: status.to_string(),
+        duration_ms,
+        affected_rows,
+        error_code: None,
+        error_message,
+        source_ip: enterprise::extract_source_ip(headers, Some(remote_addr)),
+        user_agent: headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string),
+        request_path: Some(uri.path().to_string()),
+        request_method: Some("POST".to_string()),
+        metadata,
+    };
+
+    if let Err(error) =
+        enterprise::send_query_audit(enterprise, state.internal_service_token.as_deref(), &payload).await
+    {
+        tracing::warn!("failed to submit query audit: {}", error);
+    }
+}
+
+fn extract_affected_rows(value: &Value) -> Option<u64> {
+    value
+        .get("affected_rows")
+        .or_else(|| value.get("affectedRows"))
+        .and_then(|item| item.as_u64().or_else(|| item.as_i64().map(|number| number.max(0) as u64)))
 }

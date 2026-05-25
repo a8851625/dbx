@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.config import Settings, get_settings
 from app.db.session import SessionLocal
 from app.models.approval import ChangeTicket, ChangeTicketStatement, ExecutionJob, ExecutionLock, ExecutionStatementResult
+from app.models.auth import UserIdentity
+from app.services.audit import AuditActor, AuditService
 
 FAILURE_INDEX_RE = re.compile(r"Statement\s+(?P<index>\d+)\s+failed:", re.IGNORECASE)
 
@@ -50,6 +52,7 @@ class ExecutionService:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.client = DbxExecutionClient(self.settings)
+        self.audit_service = AuditService()
 
     def ensure_job_for_ticket(
         self,
@@ -82,6 +85,24 @@ class ExecutionService:
 
         ticket.last_execution_job_id = job.id
         ticket.current_status = "queued"
+        actor = self._build_actor_for_job(db, job, ticket)
+        self.audit_service.record_event(
+            db,
+            event_type="execution.job.queued",
+            category="execution",
+            action="queue",
+            actor=actor,
+            resource_type="execution_job",
+            resource_id=job.id,
+            resource_name=ticket.ticket_no,
+            payload={
+                "ticket_id": ticket.id,
+                "ticket_no": ticket.ticket_no,
+                "run_key": run_key,
+                "execution_mode": execution_mode,
+                "executor_type": job.executor_type,
+            },
+        )
         return job
 
     def enqueue_due_tickets(self, db: Session) -> list[str]:
@@ -126,6 +147,18 @@ class ExecutionService:
                 job.error_message = "Ticket contains no executable statements"
                 job.finished_at = datetime.now(UTC)
                 ticket.current_status = "failed"
+                self.audit_service.record_event(
+                    db,
+                    event_type="execution.job.failed",
+                    category="execution",
+                    action="execute",
+                    outcome="failure",
+                    actor=self._build_actor_for_job(db, job, ticket),
+                    resource_type="execution_job",
+                    resource_id=job.id,
+                    resource_name=ticket.ticket_no,
+                    payload={"ticket_id": ticket.id, "reason": "Ticket contains no executable statements"},
+                )
                 db.commit()
                 return
 
@@ -135,6 +168,17 @@ class ExecutionService:
             job.status = "running"
             job.started_at = datetime.now(UTC)
             ticket.current_status = "executing"
+            self.audit_service.record_event(
+                db,
+                event_type="execution.job.started",
+                category="execution",
+                action="execute",
+                actor=self._build_actor_for_job(db, job, ticket),
+                resource_type="execution_job",
+                resource_id=job.id,
+                resource_name=ticket.ticket_no,
+                payload={"ticket_id": ticket.id, "run_key": job.run_key},
+            )
             db.commit()
 
             statement_texts = [statement.statement_text for statement in statements]
@@ -187,6 +231,23 @@ class ExecutionService:
                 fresh_job.finished_at = now
             if fresh_ticket is not None:
                 fresh_ticket.current_status = "approved"
+            if fresh_job is not None:
+                self.audit_service.record_event(
+                    db,
+                    event_type="execution.job.lock_conflict",
+                    category="execution",
+                    action="execute",
+                    outcome="failure",
+                    actor=self._build_actor_for_job(db, fresh_job, fresh_ticket or ticket),
+                    resource_type="execution_job",
+                    resource_id=fresh_job.id,
+                    resource_name=(fresh_ticket or ticket).ticket_no,
+                    payload={
+                        "ticket_id": (fresh_ticket or ticket).id,
+                        "datasource_id": (fresh_ticket or ticket).datasource_id,
+                        "reason": "Duplicate execution prevented by execution lock",
+                    },
+                )
             db.commit()
             return False
 
@@ -223,6 +284,47 @@ class ExecutionService:
         if ticket is not None:
             ticket.current_status = "succeeded"
             ticket.executed_at = now
+        actor = self._build_actor_for_job(db, job, ticket)
+        self.audit_service.record_event(
+            db,
+            event_type="execution.job.succeeded",
+            category="execution",
+            action="execute",
+            actor=actor,
+            resource_type="execution_job",
+            resource_id=job.id,
+            resource_name=ticket.ticket_no if ticket is not None else job.id,
+            payload={
+                "ticket_id": ticket.id if ticket is not None else job.ticket_id,
+                "run_key": job.run_key,
+                "execution_mode": job.execution_mode,
+                "affected_rows": self._to_int(total_affected),
+            },
+        )
+        if ticket is not None:
+            self.audit_service.record_query(
+                db,
+                actor=actor,
+                execution_id=job.id,
+                datasource_id=ticket.datasource_id,
+                database_name=ticket.target_database,
+                schema_name=ticket.target_schema,
+                table_name=ticket.target_table,
+                operation_type="approval_execution",
+                execution_mode=job.execution_mode,
+                statement_count=len(statements),
+                sql_text=";\n".join(statement.statement_text for statement in statements),
+                status="succeeded",
+                duration_ms=self._to_int(execution_time_ms),
+                affected_rows=self._to_int(total_affected),
+                metadata={
+                    "ticket_id": ticket.id,
+                    "ticket_no": ticket.ticket_no,
+                    "job_id": job.id,
+                    "run_key": job.run_key,
+                },
+                completed_at=now,
+            )
         db.commit()
 
     def _record_failure(
@@ -273,6 +375,47 @@ class ExecutionService:
         job.result_summary = {"error": error_message}
         if ticket is not None:
             ticket.current_status = "failed"
+        actor = self._build_actor_for_job(db, job, ticket)
+        self.audit_service.record_event(
+            db,
+            event_type="execution.job.failed",
+            category="execution",
+            action="execute",
+            outcome="failure",
+            actor=actor,
+            resource_type="execution_job",
+            resource_id=job.id,
+            resource_name=ticket.ticket_no if ticket is not None else job.id,
+            payload={
+                "ticket_id": ticket.id if ticket is not None else job.ticket_id,
+                "run_key": job.run_key,
+                "execution_mode": job.execution_mode,
+                "error_message": error_message,
+            },
+        )
+        if ticket is not None:
+            self.audit_service.record_query(
+                db,
+                actor=actor,
+                execution_id=job.id,
+                datasource_id=ticket.datasource_id,
+                database_name=ticket.target_database,
+                schema_name=ticket.target_schema,
+                table_name=ticket.target_table,
+                operation_type="approval_execution",
+                execution_mode=job.execution_mode,
+                statement_count=len(statements),
+                sql_text=";\n".join(statement.statement_text for statement in statements),
+                status="failed",
+                error_message=error_message,
+                metadata={
+                    "ticket_id": ticket.id,
+                    "ticket_no": ticket.ticket_no,
+                    "job_id": job.id,
+                    "run_key": job.run_key,
+                },
+                completed_at=now,
+            )
         db.commit()
 
     def _release_locks(self, job_id: str) -> None:
@@ -288,3 +431,21 @@ class ExecutionService:
         if not match:
             return None
         return int(match.group("index"))
+
+    def _build_actor_for_job(
+        self,
+        db: Session,
+        job: ExecutionJob,
+        ticket: ChangeTicket | None,
+    ) -> AuditActor:
+        actor_user_id = job.executor_user_id or (ticket.submitter_id if ticket is not None else None)
+        user = db.get(UserIdentity, actor_user_id) if actor_user_id else None
+        return self.audit_service.build_actor(user=user)
+
+    def _to_int(self, value: object) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None

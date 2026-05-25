@@ -5,7 +5,8 @@ import types
 import unittest
 
 from app.config import Settings
-from app.models.approval import ChangeTicket, ChangeTicketStatement, ExecutionJob
+from app.models.approval import ChangeTicket, ChangeTicketStatement, ExecutionJob, ExecutionStatementResult
+from app.models.audit import AuditEvent, QueryAudit
 
 fake_session_module = types.ModuleType("app.db.session")
 fake_session_module.SessionLocal = None
@@ -100,14 +101,20 @@ class ExecutionServiceTests(unittest.TestCase):
         self.assertEqual(job.status, "failed")
         self.assertEqual(ticket.current_status, "failed")
         self.assertEqual(job.result_summary, {"error": "Statement 2 failed: syntax error"})
-        self.assertEqual(len(db.added), 3)
-        first, second, third = db.added
+        statement_results = [item for item in db.added if isinstance(item, ExecutionStatementResult)]
+        audit_events = [item for item in db.added if isinstance(item, AuditEvent)]
+        query_audits = [item for item in db.added if isinstance(item, QueryAudit)]
+        self.assertEqual(len(statement_results), 3)
+        self.assertEqual(len(audit_events), 1)
+        self.assertEqual(len(query_audits), 1)
+        first, second, third = statement_results
         self.assertTrue(first.success)
         self.assertEqual(first.result, {"rolled_back": True})
         self.assertFalse(second.success)
         self.assertEqual(second.db_error_message, "Statement 2 failed: syntax error")
         self.assertFalse(third.success)
         self.assertEqual(third.result, {"not_executed": True})
+        self.assertEqual(query_audits[0].status, "failed")
 
 
 if __name__ == "__main__":

@@ -62,6 +62,7 @@ const DriverStorePage = defineAsyncComponent(() => import("@/components/config/D
 const UpdateDialog = defineAsyncComponent(() => import("@/components/layout/UpdateDialog.vue"));
 const LoginPage = defineAsyncComponent(() => import("@/components/auth/LoginPage.vue"));
 const ApprovalCenterSheet = defineAsyncComponent(() => import("@/components/approval/ApprovalCenterSheet.vue"));
+const AuditCenterSheet = defineAsyncComponent(() => import("@/components/audit/AuditCenterSheet.vue"));
 
 type AiAssistantHandle = {
   triggerAction: (action: AiAction, instruction?: string) => void;
@@ -109,6 +110,7 @@ const showDriverStore = ref(false);
 const agentDriverUpdateCount = ref(0);
 const showHistory = ref(false);
 const showApprovalCenter = ref(false);
+const showAuditCenter = ref(false);
 const showAiPanel = ref(localStorage.getItem("dbx-ai-panel-open") === "true");
 const aiPanelReady = ref(false);
 const { sidebarWidth, aiPanelWidth, historyWidth, startSidebarResize, startAiPanelResize, startHistoryResize } =
@@ -243,6 +245,7 @@ const canRunDataCompare = computed(() => hasPermission("data.compare"));
 const canManageDrivers = computed(() => hasPermission("drivers.manage"));
 const canViewHistory = computed(() => hasPermission("history.view"));
 const canViewApproval = computed(() => hasPermission("approval.ticket.view") || hasPermission("approval.ticket.create"));
+const canViewAudit = computed(() => hasPermission("audit.event.view"));
 const canUseAi = computed(() => hasPermission("ai.use"));
 const canManageSettings = computed(() => hasPermission("settings.manage"));
 const canExportConnections = computed(() => hasPermission("export.database"));
@@ -295,6 +298,12 @@ watch(canViewApproval, (allowed) => {
   }
 });
 
+watch(canViewAudit, (allowed) => {
+  if (!allowed) {
+    showAuditCenter.value = false;
+  }
+});
+
 function toggleAiPanel() {
   if (!canUseAi.value) {
     permissionDenied();
@@ -333,6 +342,14 @@ function openApprovalCenter() {
     return;
   }
   showApprovalCenter.value = true;
+}
+
+function openAuditCenter() {
+  if (!canViewAudit.value) {
+    permissionDenied();
+    return;
+  }
+  showAuditCenter.value = true;
 }
 
 function analyzeHistoryWithAi(entry: HistoryEntry) {
@@ -932,6 +949,7 @@ onUnmounted(() => {
           :can-manage-drivers="canManageDrivers"
           :can-view-history="canViewHistory"
           :can-view-approval="canViewApproval"
+          :can-view-audit="canViewAudit"
           :can-use-ai="canUseAi"
           :can-manage-settings="canManageSettings"
           @new-connection="setConnectionDialogOpen(true)"
@@ -943,6 +961,7 @@ onUnmounted(() => {
           @open-settings="showSettingsDialog = true"
           @open-driver-store="showDriverStore = !showDriverStore"
           @open-approval="openApprovalCenter"
+          @open-audit="openAuditCenter"
           @check-updates="checkUpdates()"
           @open-transfer="dialogs.showTransferDialog.value = true"
           @open-sql-file="dialogs.showSqlFileDialog.value = true"
@@ -1069,12 +1088,14 @@ onUnmounted(() => {
                 :can-execute-query="canExecuteQuery"
                 :can-view-history="canViewHistory"
                 :can-view-approval="canViewApproval"
+                :can-view-audit="canViewAudit"
                 :can-import-config="canManageConnections"
                 @open-connection-query="openConnectionQuery"
                 @new-connection="setConnectionDialogOpen(true)"
                 @new-query="newQuery"
                 @show-history="showHistory = true"
                 @show-approval="openApprovalCenter"
+                @show-audit="openAuditCenter"
                 @import-config="dialogs.onImportClick"
                 @open-github="openGitHub"
                 @open-mcp-guide="openMcpGuide"
@@ -1169,6 +1190,10 @@ onUnmounted(() => {
           :draft-title="activeTab?.title || ''"
           :can-create="hasPermission('approval.ticket.create')"
           :can-view-all="isApprovalAdmin"
+        />
+        <AuditCenterSheet
+          v-if="showAuditCenter"
+          v-model:open="showAuditCenter"
         />
         <Transition name="toast">
           <div

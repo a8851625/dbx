@@ -19,6 +19,7 @@ import {
   Settings,
   CloudDownload,
   Package,
+  ScrollText,
 } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,6 +60,7 @@ defineProps<{
   canManageDrivers: boolean;
   canViewHistory: boolean;
   canViewApproval: boolean;
+  canViewAudit: boolean;
   canUseAi: boolean;
   canManageSettings: boolean;
 }>();
@@ -78,6 +80,7 @@ const emit = defineEmits<{
   "open-schema-diff": [];
   "open-data-compare": [];
   "open-approval": [];
+  "open-audit": [];
 }>();
 
 const { t } = useI18n();
@@ -179,6 +182,17 @@ function onToolbarDblClick(e: MouseEvent) {
     >
       <ShieldCheck class="h-3.5 w-3.5" />
       {{ t("toolbar.approvals") }}
+    </Button>
+
+    <Button
+      v-if="canViewAudit"
+      variant="ghost"
+      size="sm"
+      class="h-8 px-2 text-xs gap-1"
+      @click="emit('open-audit')"
+    >
+      <ScrollText class="h-3.5 w-3.5" />
+      {{ t("toolbar.audit") }}
     </Button>
 
     <Button

@@ -43,6 +43,31 @@ pub struct AccessCheckResponse {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InternalQueryAuditRequest {
+    pub session_token: Option<String>,
+    pub execution_id: Option<String>,
+    pub datasource_id: String,
+    pub database: String,
+    pub schema: Option<String>,
+    pub table: Option<String>,
+    pub operation_type: String,
+    pub execution_mode: String,
+    pub statement_count: usize,
+    pub sql_text: String,
+    pub status: String,
+    pub duration_ms: Option<u64>,
+    pub affected_rows: Option<u64>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub source_ip: Option<String>,
+    pub user_agent: Option<String>,
+    pub request_path: Option<String>,
+    pub request_method: Option<String>,
+    pub metadata: Value,
+}
+
 pub async fn proxy_request(State(state): State<Arc<WebState>>, req: Request<Body>) -> Response {
     let Some(enterprise) = state.enterprise.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
@@ -92,6 +117,53 @@ pub async fn check_access(
         return Err(format!("Enterprise access check failed: {}", response.status()));
     }
     response.json().await.map_err(|error| format!("Invalid access decision payload: {error}"))
+}
+
+pub async fn send_query_audit(
+    enterprise: &EnterpriseBridge,
+    internal_token: Option<&str>,
+    payload: &InternalQueryAuditRequest,
+) -> Result<(), String> {
+    let Some(token) = internal_token.filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+
+    let response = enterprise
+        .client
+        .post(format!("{}/api/v1/audit/internal/query", enterprise.base_url))
+        .header("x-dbx-internal-token", token)
+        .json(payload)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to submit query audit: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("Enterprise query audit failed: {}", response.status()));
+    }
+    Ok(())
+}
+
+pub fn extract_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
+    let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
+    for pair in cookie_header.split(';') {
+        let pair = pair.trim();
+        let prefix = format!("{cookie_name}=");
+        if let Some(value) = pair.strip_prefix(&prefix) {
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn extract_source_ip(headers: &HeaderMap, remote_addr: Option<std::net::SocketAddr>) -> Option<String> {
+    if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|value| value.to_str().ok()) {
+        let source_ip = forwarded.split(',').next().unwrap_or_default().trim();
+        if !source_ip.is_empty() {
+            return Some(source_ip.to_string());
+        }
+    }
+    remote_addr.map(|addr| addr.ip().to_string())
 }
 
 pub fn permission_for_request(method: &Method, path: &str) -> Option<&'static str> {

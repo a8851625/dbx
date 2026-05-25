@@ -22,6 +22,12 @@ import type {
   SavedSqlLibrary,
 } from "@/types/database";
 import type { AiConfig } from "@/stores/settingsStore";
+import type {
+  AuditEventListResponse,
+  ListAuditEventsOptions,
+  ListQueryAuditsOptions,
+  QueryAuditListResponse,
+} from "./http";
 import type { QueryEditability } from "@/lib/sqlAnalysis";
 import type {
   DataGridColumnValueFilterConditionOptions,
@@ -419,6 +425,14 @@ export async function rejectApprovalTicket(_ticketId: string, _comment?: string)
 
 export async function retryApprovalTicket(_ticketId: string): Promise<ApprovalTicketRecord> {
   throw new Error("Approval ticket APIs are only available in web mode");
+}
+
+export async function listAuditEvents(_options: ListAuditEventsOptions = {}): Promise<AuditEventListResponse> {
+  throw new Error("Audit APIs are only available in web mode");
+}
+
+export async function listQueryAudits(_options: ListQueryAuditsOptions = {}): Promise<QueryAuditListResponse> {
+  throw new Error("Audit APIs are only available in web mode");
 }
 
 export async function saveDesktopSettings(settings: DesktopSettings): Promise<void> {

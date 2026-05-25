@@ -19,9 +19,15 @@ services:
       dockerfile: backend/Dockerfile
     env_file:
       - ../backend/.env.example
+    command: >
+      sh -c "alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000"
     environment:
       - DBX_WEB_BASE_URL=http://dbx:4224
       - DBX_WEB_INTERNAL_TOKEN=dbx-enterprise-internal
+      - ENTERPRISE_INTERNAL_TOKEN=dbx-enterprise-internal
+      - OIDC_REDIRECT_URI=http://localhost:4224/api/v1/auth/callback
+      - OIDC_POST_LOGOUT_REDIRECT_URI=http://localhost:4224/login
     ports:
       - "8000:8000"
     depends_on:
