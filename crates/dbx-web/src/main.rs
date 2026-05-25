@@ -1,4 +1,5 @@
 mod auth;
+mod enterprise;
 mod error;
 mod routes;
 mod sse;
@@ -13,14 +14,14 @@ use argon2::password_hash::SaltString;
 use argon2::{Argon2, PasswordHasher};
 use axum::extract::DefaultBodyLimit;
 use axum::middleware;
-use axum::routing::{delete, get, post};
+use axum::routing::{any, delete, get, post};
 use axum::Router;
 use dbx_core::connection::AppState;
 use dbx_core::storage::Storage;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
-use state::WebState;
+use state::{EnterpriseBridge, WebState};
 
 #[tokio::main]
 async fn main() {
@@ -67,6 +68,12 @@ async fn main() {
         sse_channels: RwLock::new(HashMap::new()),
         export_downloads: RwLock::new(HashMap::new()),
         login_rate_limit: tokio::sync::Mutex::new(state::LoginRateLimit { fail_count: 0, locked_until: None }),
+        enterprise: std::env::var("DBX_ENTERPRISE_API_BASE_URL").ok().map(|base_url| EnterpriseBridge {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            session_cookie_name: std::env::var("DBX_ENTERPRISE_SESSION_COOKIE_NAME")
+                .unwrap_or_else(|_| "dbx_enterprise_session".to_string()),
+            client: reqwest::Client::new(),
+        }),
     });
 
     // CORS
@@ -268,6 +275,8 @@ async fn main() {
 
     // Build app
     let mut app = Router::new()
+        .route("/api/v1", any(enterprise::proxy_request))
+        .route("/api/v1/{*path}", any(enterprise::proxy_request))
         .nest("/api", api)
         .layer(DefaultBodyLimit::max(300 * 1024 * 1024))
         .layer(tower_http::trace::TraceLayer::new_for_http())

@@ -1,4 +1,5 @@
 use dbx_core::connection::AppState;
+use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,6 +16,13 @@ pub struct ExportDownload {
     pub download_name: String,
 }
 
+#[derive(Clone)]
+pub struct EnterpriseBridge {
+    pub base_url: String,
+    pub session_cookie_name: String,
+    pub client: Client,
+}
+
 pub struct WebState {
     pub app: Arc<AppState>,
     pub data_dir: PathBuf,
@@ -23,6 +31,7 @@ pub struct WebState {
     pub sse_channels: RwLock<HashMap<String, broadcast::Sender<String>>>,
     pub export_downloads: RwLock<HashMap<String, ExportDownload>>,
     pub login_rate_limit: Mutex<LoginRateLimit>,
+    pub enterprise: Option<EnterpriseBridge>,
 }
 
 impl WebState {

@@ -92,6 +92,31 @@ import type {
 import type { SchemaDiffPreparation, SchemaDiffPreparationOptions, TableDiff } from "@/lib/schemaDiff";
 import type { DataGridSavePreparation } from "./tauri";
 
+export interface EnterpriseResourcePolicy {
+  principal_type: string;
+  principal_ref: string;
+  resource_type: string;
+  resource_key: string;
+  permission_code?: string | null;
+  effect: string;
+  conditions: Record<string, unknown>;
+}
+
+export interface EnterpriseAccessContext {
+  user: {
+    id: string;
+    provider_id: string;
+    subject: string;
+    email: string;
+    display_name?: string | null;
+    username?: string | null;
+    role: string;
+  };
+  roles: string[];
+  permissions: string[];
+  policies: EnterpriseResourcePolicy[];
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -148,6 +173,12 @@ export async function saveConnections(configs: ConnectionConfig[]): Promise<void
 
 export async function loadConnections(): Promise<ConnectionConfig[]> {
   return get("/api/connection/list");
+}
+
+export async function getEnterpriseAccessContext(): Promise<EnterpriseAccessContext> {
+  const res = await fetch("/api/v1/access/me", { credentials: "include" });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 export async function listSystemFonts(): Promise<string[]> {

@@ -93,6 +93,31 @@ export interface DesktopSettings {
   show_tray_icon: boolean;
 }
 
+export interface EnterpriseResourcePolicy {
+  principal_type: string;
+  principal_ref: string;
+  resource_type: string;
+  resource_key: string;
+  permission_code?: string | null;
+  effect: string;
+  conditions: Record<string, unknown>;
+}
+
+export interface EnterpriseAccessContext {
+  user: {
+    id: string;
+    provider_id: string;
+    subject: string;
+    email: string;
+    display_name?: string | null;
+    username?: string | null;
+    role: string;
+  };
+  roles: string[];
+  permissions: string[];
+  policies: EnterpriseResourcePolicy[];
+}
+
 export interface QueryPagination {
   limit: number;
   offset: number;
@@ -230,6 +255,10 @@ export async function loadAiConfig(): Promise<AiConfig | null> {
 
 export async function loadDesktopSettings(): Promise<DesktopSettings> {
   return invoke("load_desktop_settings");
+}
+
+export async function getEnterpriseAccessContext(): Promise<EnterpriseAccessContext> {
+  throw new Error("Enterprise access context is only available in web mode");
 }
 
 export async function saveDesktopSettings(settings: DesktopSettings): Promise<void> {

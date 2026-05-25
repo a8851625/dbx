@@ -26,6 +26,7 @@ export default {
     passwordChanged: "Password changed successfully",
     changePasswordFailed: "Failed to change password",
     changePasswordDescription: "Enter your current password and choose a new one",
+    permissionDenied: "Your account is not allowed to perform this action",
   },
   toolbar: {
     newConnection: "New Connection",

@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::Json;
 use dbx_core::models::connection::ConnectionConfig;
 use serde::Deserialize;
 
+use crate::enterprise;
 use crate::error::AppError;
 use crate::state::WebState;
 
@@ -102,9 +104,16 @@ pub async fn save_connections(
     Ok(Json(()))
 }
 
-pub async fn load_connections(State(state): State<Arc<WebState>>) -> Result<Json<Vec<ConnectionConfig>>, AppError> {
-    let configs = state.app.storage.load_connections().await.map_err(AppError)?;
+pub async fn load_connections(
+    State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ConnectionConfig>>, AppError> {
+    let mut configs = state.app.storage.load_connections().await.map_err(AppError)?;
     cache_connection_configs(&state, &configs).await;
+    if let Some(enterprise) = state.enterprise.as_ref() {
+        let context = enterprise::fetch_access_context(enterprise, &headers).await.map_err(AppError)?;
+        configs.retain(|config| enterprise::can_access_datasource(&context, &config.id));
+    }
     Ok(Json(configs))
 }
 
@@ -181,7 +190,9 @@ mod tests {
             password_hash: RwLock::new(None),
             sessions: RwLock::new(HashSet::new()),
             sse_channels: RwLock::new(HashMap::new()),
+            export_downloads: RwLock::new(HashMap::new()),
             login_rate_limit: Mutex::new(LoginRateLimit { fail_count: 0, locked_until: None }),
+            enterprise: None,
         });
         (state, dir)
     }

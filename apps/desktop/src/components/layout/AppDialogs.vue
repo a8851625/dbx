@@ -31,6 +31,7 @@ const props = defineProps<{
   appVersion?: string;
   showDangerDialog: boolean;
   dangerSql: string;
+  allowConnectionManagement?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -72,7 +73,9 @@ const editConfig = computed(() => {
   if (!id) return undefined;
   return connectionStore.getConfig(id);
 });
-const shouldShowConnectionDialog = computed(() => props.showConnectionDialog || !!editConfig.value);
+const shouldShowConnectionDialog = computed(
+  () => !!props.allowConnectionManagement && (props.showConnectionDialog || !!editConfig.value),
+);
 
 watch(editConfig, (v) => {
   if (v) emit("update:showConnectionDialog", true);

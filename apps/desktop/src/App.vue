@@ -54,6 +54,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { HistoryEntry } from "@/lib/tauri";
 import type { AiAction } from "@/lib/ai";
+import type { EnterpriseAccessContext } from "@/lib/api";
 
 const AiAssistant = defineAsyncComponent(() => import("@/components/editor/AiAssistant.vue"));
 const QueryHistory = defineAsyncComponent(() => import("@/components/editor/QueryHistory.vue"));
@@ -98,6 +99,7 @@ const setupRequired = ref(false);
 const authProviderName = ref<string | null>(null);
 const authLoginUrl = ref<string | null>(null);
 const authMockMode = ref(false);
+const accessContext = ref<EnterpriseAccessContext | null>(null);
 
 const showConnectionDialog = ref(false);
 const connectionDialogPrefill = ref<ConnectionDeepLinkDraft | null>(null);
@@ -221,6 +223,30 @@ const saveSqlFolders = computed(() => {
   const tab = activeTab.value;
   return tab ? savedSqlStore.listFolders(tab.connectionId) : [];
 });
+const effectivePermissions = computed(() => new Set(accessContext.value?.permissions ?? []));
+const effectiveRoles = computed(() => new Set(accessContext.value?.roles ?? []));
+
+function hasPermission(code: string) {
+  if (isDesktop || !needsAuth.value) return true;
+  return effectiveRoles.value.has("admin") || effectivePermissions.value.has(code);
+}
+
+const canViewConnections = computed(() => hasPermission("menu.connections.view"));
+const canManageConnections = computed(() => hasPermission("datasource.manage"));
+const canExecuteQuery = computed(() => hasPermission("query.execute"));
+const canRunTransfer = computed(() => hasPermission("transfer.execute"));
+const canRunSqlFile = computed(() => hasPermission("sql_file.execute"));
+const canRunSchemaDiff = computed(() => hasPermission("schema.diff"));
+const canRunDataCompare = computed(() => hasPermission("data.compare"));
+const canManageDrivers = computed(() => hasPermission("drivers.manage"));
+const canViewHistory = computed(() => hasPermission("history.view"));
+const canUseAi = computed(() => hasPermission("ai.use"));
+const canManageSettings = computed(() => hasPermission("settings.manage"));
+const canExportConnections = computed(() => hasPermission("export.database"));
+
+function permissionDenied() {
+  toast(t("auth.permissionDenied"), 3000);
+}
 
 watch(
   () => queryStore.activeTabId,
@@ -240,12 +266,39 @@ watch(
   },
 );
 
+watch(canUseAi, (allowed) => {
+  if (!allowed) {
+    showAiPanel.value = false;
+    localStorage.setItem("dbx-ai-panel-open", "false");
+  }
+});
+
+watch(canManageDrivers, (allowed) => {
+  if (!allowed) {
+    showDriverStore.value = false;
+  }
+});
+
+watch(canViewHistory, (allowed) => {
+  if (!allowed) {
+    showHistory.value = false;
+  }
+});
+
 function toggleAiPanel() {
+  if (!canUseAi.value) {
+    permissionDenied();
+    return;
+  }
   showAiPanel.value = !showAiPanel.value;
   localStorage.setItem("dbx-ai-panel-open", String(showAiPanel.value));
 }
 
 function fixWithAi(errorMessage: string) {
+  if (!canUseAi.value) {
+    permissionDenied();
+    return;
+  }
   if (!showAiPanel.value) {
     showAiPanel.value = true;
     localStorage.setItem("dbx-ai-panel-open", "true");
@@ -254,6 +307,10 @@ function fixWithAi(errorMessage: string) {
 }
 
 function openAiPanel() {
+  if (!canUseAi.value) {
+    permissionDenied();
+    return;
+  }
   if (!showAiPanel.value) {
     showAiPanel.value = true;
     localStorage.setItem("dbx-ai-panel-open", "true");
@@ -432,6 +489,10 @@ async function openPendingSqlFiles() {
 }
 
 async function openConnectionDeepLink(url: string) {
+  if (!canManageConnections.value) {
+    permissionDenied();
+    return;
+  }
   try {
     const draft = parseConnectionDeepLink(url);
     if (!draft) return;
@@ -457,11 +518,19 @@ async function openPendingConnectionLinks() {
 }
 
 function setConnectionDialogOpen(value: boolean) {
+  if (value && !canManageConnections.value) {
+    permissionDenied();
+    return;
+  }
   showConnectionDialog.value = value;
   if (!value) connectionDialogPrefill.value = null;
 }
 
 async function newQuery() {
+  if (!canExecuteQuery.value) {
+    permissionDenied();
+    return;
+  }
   const target = resolveNewQueryTarget({
     activeTab: activeTab.value,
     selectedTreeNode: findTreeNodeById(connectionStore.treeNodes, connectionStore.selectedTreeNodeId),
@@ -486,6 +555,10 @@ async function newQuery() {
 }
 
 async function openConnectionQuery(connectionId: string) {
+  if (!canExecuteQuery.value) {
+    permissionDenied();
+    return;
+  }
   const connection = connectionStore.getConfig(connectionId);
   if (!connection) return;
   connectionStore.activeConnectionId = connectionId;
@@ -659,11 +732,20 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-function onLoginSuccess() {
+async function loadAccessContext() {
+  if (isDesktop || !needsAuth.value || !authenticated.value) {
+    accessContext.value = null;
+    return;
+  }
+  accessContext.value = await api.getEnterpriseAccessContext();
+}
+
+async function onLoginSuccess() {
   authenticated.value = true;
   setupRequired.value = false;
   needsAuth.value = true;
   window.history.replaceState(null, "", "/");
+  await loadAccessContext();
   initApp();
 }
 
@@ -720,6 +802,16 @@ function handleContextMenu(e: MouseEvent) {
 }
 
 function openDriverStoreFromEvent() {
+  if (!canManageDrivers.value) return;
+  showDriverStore.value = true;
+}
+
+function openDriverStoreFromDialog() {
+  if (!canManageDrivers.value) {
+    permissionDenied();
+    return;
+  }
+  setConnectionDialogOpen(false);
   showDriverStore.value = true;
 }
 
@@ -738,6 +830,9 @@ onMounted(async () => {
   if (!isDesktop) {
     try {
       await loadAuthStatus();
+      if (authenticated.value) {
+        await loadAccessContext();
+      }
     } catch {
       /* server unreachable */
     }
@@ -810,7 +905,17 @@ onUnmounted(() => {
           :agent-driver-update-count="agentDriverUpdateCount"
           :has-connections="connectionStore.connections.length > 0"
           :has-sql-file-connections="hasSqlFileConnections"
-          @new-connection="showConnectionDialog = true"
+          :can-manage-connections="canManageConnections"
+          :can-execute-query="canExecuteQuery"
+          :can-run-transfer="canRunTransfer"
+          :can-run-sql-file="canRunSqlFile"
+          :can-run-schema-diff="canRunSchemaDiff"
+          :can-run-data-compare="canRunDataCompare"
+          :can-manage-drivers="canManageDrivers"
+          :can-view-history="canViewHistory"
+          :can-use-ai="canUseAi"
+          :can-manage-settings="canManageSettings"
+          @new-connection="setConnectionDialogOpen(true)"
           @new-query="newQuery"
           @set-theme-mode="setThemeMode"
           @toggle-ai="toggleAiPanel"
@@ -833,9 +938,12 @@ onUnmounted(() => {
           "
         >
           <AppSidebar
+            v-if="canViewConnections"
             ref="appSidebarRef"
             :sidebar-width="sidebarWidth"
             :classic-layout="isClassicLayout"
+            :can-import-config="canManageConnections"
+            :can-export-config="canExportConnections"
             @import="dialogs.onImportClick"
             @export="dialogs.onExportClick"
             @start-resize="startSidebarResize"
@@ -937,8 +1045,12 @@ onUnmounted(() => {
                 :recent-connections="recentConnections"
                 :app-version="appVersion"
                 :has-connections="connectionStore.connections.length > 0"
+                :can-manage-connections="canManageConnections"
+                :can-execute-query="canExecuteQuery"
+                :can-view-history="canViewHistory"
+                :can-import-config="canManageConnections"
                 @open-connection-query="openConnectionQuery"
-                @new-connection="showConnectionDialog = true"
+                @new-connection="setConnectionDialogOpen(true)"
                 @new-query="newQuery"
                 @show-history="showHistory = true"
                 @import-config="dialogs.onImportClick"
@@ -997,6 +1109,7 @@ onUnmounted(() => {
           :app-version="appVersion"
           :show-danger-dialog="showDangerDialog"
           :danger-sql="dangerSql"
+          :allow-connection-management="canManageConnections"
           @update:show-connection-dialog="setConnectionDialogOpen"
           @update:show-settings-dialog="showSettingsDialog = $event"
           @update:show-danger-dialog="showDangerDialog = $event"
@@ -1006,10 +1119,7 @@ onUnmounted(() => {
           @connect-failed="
             (msg: string) => toast(t('connection.connectFailed', { message: translateBackendError(t, msg) }), 5000)
           "
-          @open-driver-store="
-            setConnectionDialogOpen(false);
-            showDriverStore = true;
-          "
+          @open-driver-store="openDriverStoreFromDialog"
           @structure-editor-saved="onStructureEditorSaved(onReloadData, toast)"
           @open-lineage-target="openLineageTarget"
           @open-database-search-target="openDatabaseSearchTarget"

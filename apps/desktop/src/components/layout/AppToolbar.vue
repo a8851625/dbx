@@ -49,6 +49,16 @@ defineProps<{
   agentDriverUpdateCount: number;
   hasConnections: boolean;
   hasSqlFileConnections: boolean;
+  canManageConnections: boolean;
+  canExecuteQuery: boolean;
+  canRunTransfer: boolean;
+  canRunSqlFile: boolean;
+  canRunSchemaDiff: boolean;
+  canRunDataCompare: boolean;
+  canManageDrivers: boolean;
+  canViewHistory: boolean;
+  canUseAi: boolean;
+  canManageSettings: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -86,12 +96,19 @@ function onToolbarDblClick(e: MouseEvent) {
     data-tauri-drag-region
     @dblclick="onToolbarDblClick"
   >
-    <Button variant="ghost" size="sm" class="h-8 px-2 text-xs gap-1" @click="emit('new-connection')">
+    <Button
+      v-if="canManageConnections"
+      variant="ghost"
+      size="sm"
+      class="h-8 px-2 text-xs gap-1"
+      @click="emit('new-connection')"
+    >
       <DatabaseZap class="h-3.5 w-3.5" />
       {{ t("toolbar.newConnection") }}
     </Button>
 
     <Button
+      v-if="canExecuteQuery"
       variant="ghost"
       size="sm"
       class="h-8 px-2 text-xs gap-1"
@@ -103,6 +120,7 @@ function onToolbarDblClick(e: MouseEvent) {
     </Button>
 
     <Button
+      v-if="canRunTransfer"
       variant="ghost"
       size="sm"
       class="h-8 px-2 text-xs gap-1"
@@ -114,6 +132,7 @@ function onToolbarDblClick(e: MouseEvent) {
     </Button>
 
     <Button
+      v-if="canRunSqlFile"
       variant="ghost"
       size="sm"
       class="h-8 px-2 text-xs gap-1"
@@ -125,6 +144,7 @@ function onToolbarDblClick(e: MouseEvent) {
     </Button>
 
     <Button
+      v-if="canRunSchemaDiff"
       variant="ghost"
       size="sm"
       class="h-8 px-2 text-xs gap-1"
@@ -136,6 +156,7 @@ function onToolbarDblClick(e: MouseEvent) {
     </Button>
 
     <Button
+      v-if="canRunDataCompare"
       variant="ghost"
       size="sm"
       class="h-8 px-2 text-xs gap-1"
@@ -147,6 +168,7 @@ function onToolbarDblClick(e: MouseEvent) {
     </Button>
 
     <Button
+      v-if="canManageDrivers"
       variant="ghost"
       size="sm"
       class="h-8 px-2 text-xs gap-1"
@@ -166,6 +188,36 @@ function onToolbarDblClick(e: MouseEvent) {
 
     <div class="flex-1" data-tauri-drag-region />
 
+    <Tooltip v-if="canViewHistory">
+      <TooltipTrigger as-child>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="relative h-8 w-8"
+          :class="{ 'bg-accent': showHistory }"
+          @click="emit('toggle-history')"
+        >
+          <History class="h-4 w-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{{ t("history.title") }}</TooltipContent>
+    </Tooltip>
+
+    <Tooltip v-if="canUseAi">
+      <TooltipTrigger as-child>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-8 w-8"
+          :class="{ 'bg-accent': showAiPanel }"
+          @click="emit('toggle-ai')"
+        >
+          <Bot class="h-4 w-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>AI</TooltipContent>
+    </Tooltip>
+
     <Tooltip>
       <TooltipTrigger as-child>
         <Button
@@ -184,36 +236,6 @@ function onToolbarDblClick(e: MouseEvent) {
         </Button>
       </TooltipTrigger>
       <TooltipContent>{{ t("updates.check") }}</TooltipContent>
-    </Tooltip>
-
-    <Tooltip>
-      <TooltipTrigger as-child>
-        <Button
-          variant="ghost"
-          size="icon"
-          class="h-8 w-8"
-          :class="{ 'bg-accent': showHistory }"
-          @click="emit('toggle-history')"
-        >
-          <History class="h-4 w-4" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{{ t("history.title") }}</TooltipContent>
-    </Tooltip>
-
-    <Tooltip>
-      <TooltipTrigger as-child>
-        <Button
-          variant="ghost"
-          size="icon"
-          class="h-8 w-8"
-          :class="{ 'bg-accent': showAiPanel }"
-          @click="emit('toggle-ai')"
-        >
-          <Bot class="h-4 w-4" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>AI</TooltipContent>
     </Tooltip>
 
     <Tooltip>
@@ -302,9 +324,14 @@ function onToolbarDblClick(e: MouseEvent) {
       <TooltipContent>GitHub</TooltipContent>
     </Tooltip>
 
-    <Tooltip>
+    <Tooltip v-if="canManageSettings">
       <TooltipTrigger as-child>
-        <Button variant="ghost" size="icon" class="h-8 w-8" @click="emit('open-settings')">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-8 w-8"
+          @click="emit('open-settings')"
+        >
           <Settings class="h-4 w-4" />
         </Button>
       </TooltipTrigger>

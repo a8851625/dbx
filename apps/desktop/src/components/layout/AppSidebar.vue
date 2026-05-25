@@ -18,6 +18,8 @@ import { useToast } from "@/composables/useToast";
 defineProps<{
   sidebarWidth: number;
   classicLayout?: boolean;
+  canImportConfig?: boolean;
+  canExportConfig?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -67,7 +69,7 @@ defineExpose({ focusSearch });
           </TooltipTrigger>
           <TooltipContent>{{ t("contextMenu.refreshChildren") }}</TooltipContent>
         </Tooltip>
-        <DropdownMenu>
+        <DropdownMenu v-if="canImportConfig">
           <DropdownMenuTrigger as-child>
             <Button variant="ghost" size="icon" class="h-5 w-5" :title="t('sidebar.import')">
               <Upload class="h-3 w-3" />
@@ -85,7 +87,7 @@ defineExpose({ focusSearch });
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Tooltip>
+        <Tooltip v-if="canExportConfig">
           <TooltipTrigger as-child>
             <Button variant="ghost" size="icon" class="h-5 w-5" @click="emit('export')">
               <Download class="h-3 w-3" />

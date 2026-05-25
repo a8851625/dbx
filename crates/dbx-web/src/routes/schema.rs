@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use axum::Json;
+use dbx_core::db::{DatabaseInfo, ObjectInfo, TableInfo};
 use serde::Deserialize;
 
+use crate::enterprise;
 use crate::error::AppError;
 use crate::state::WebState;
 
@@ -20,28 +23,43 @@ pub struct SchemaQuery {
 
 pub async fn list_databases(
     State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
     Query(q): Query<SchemaQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let result = dbx_core::schema::list_databases_core(&state.app, &q.connection_id).await.map_err(AppError)?;
+    let mut result = dbx_core::schema::list_databases_core(&state.app, &q.connection_id).await.map_err(AppError)?;
+    if let Some(enterprise) = state.enterprise.as_ref() {
+        let context = enterprise::fetch_access_context(enterprise, &headers).await.map_err(AppError)?;
+        result.retain(|database| {
+            enterprise::can_access_scope(&context, &q.connection_id, Some(database.name.as_str()), None, None)
+        });
+    }
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
 pub async fn list_schemas(
     State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
     Query(q): Query<SchemaQuery>,
 ) -> Result<Json<Vec<String>>, AppError> {
     let database = q.database.as_deref().unwrap_or("");
-    let result = dbx_core::schema::list_schemas_core(&state.app, &q.connection_id, database).await.map_err(AppError)?;
+    let mut result = dbx_core::schema::list_schemas_core(&state.app, &q.connection_id, database).await.map_err(AppError)?;
+    if let Some(enterprise) = state.enterprise.as_ref() {
+        let context = enterprise::fetch_access_context(enterprise, &headers).await.map_err(AppError)?;
+        result.retain(|schema| {
+            enterprise::can_access_scope(&context, &q.connection_id, Some(database), Some(schema.as_str()), None)
+        });
+    }
     Ok(Json(result))
 }
 
 pub async fn list_tables(
     State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
     Query(q): Query<SchemaQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let database = q.database.as_deref().unwrap_or("");
     let schema = q.schema.as_deref().unwrap_or("");
-    let result = dbx_core::schema::list_tables_core(
+    let mut result = dbx_core::schema::list_tables_core(
         &state.app,
         &q.connection_id,
         database,
@@ -51,17 +69,42 @@ pub async fn list_tables(
     )
     .await
     .map_err(AppError)?;
+    if let Some(enterprise) = state.enterprise.as_ref() {
+        let context = enterprise::fetch_access_context(enterprise, &headers).await.map_err(AppError)?;
+        result.retain(|table| {
+            enterprise::can_access_scope(
+                &context,
+                &q.connection_id,
+                Some(database),
+                Some(schema),
+                Some(table.name.as_str()),
+            )
+        });
+    }
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 
 pub async fn list_objects(
     State(state): State<Arc<WebState>>,
+    headers: HeaderMap,
     Query(q): Query<SchemaQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let database = q.database.as_deref().unwrap_or("");
     let schema = q.schema.as_deref().unwrap_or("");
-    let result =
+    let mut result =
         dbx_core::schema::list_objects_core(&state.app, &q.connection_id, database, schema).await.map_err(AppError)?;
+    if let Some(enterprise) = state.enterprise.as_ref() {
+        let context = enterprise::fetch_access_context(enterprise, &headers).await.map_err(AppError)?;
+        result.retain(|object| {
+            enterprise::can_access_scope(
+                &context,
+                &q.connection_id,
+                Some(database),
+                Some(schema),
+                Some(object.name.as_str()),
+            )
+        });
+    }
     Ok(Json(serde_json::to_value(result).map_err(|e| AppError(e.to_string()))?))
 }
 

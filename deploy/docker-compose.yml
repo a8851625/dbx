@@ -6,7 +6,8 @@ services:
     ports:
       - "4224:4224"
     environment:
-      - DBX_PASSWORD=changeme
+      - DBX_ENTERPRISE_API_BASE_URL=http://dbx-enterprise-api:8000
+      - DBX_ENTERPRISE_SESSION_COOKIE_NAME=dbx_enterprise_session
     volumes:
       - dbx-data:/app/data
     restart: unless-stopped

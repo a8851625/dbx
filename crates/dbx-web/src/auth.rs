@@ -1,3 +1,4 @@
+use axum::body::{to_bytes, Body};
 use std::sync::Arc;
 
 use argon2::password_hash::rand_core::OsRng;
@@ -9,7 +10,9 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+use crate::enterprise;
 use crate::state::WebState;
 
 #[derive(Deserialize)]
@@ -184,6 +187,71 @@ pub async fn auth_middleware(
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
+    if let Some(enterprise_bridge) = state.enterprise.as_ref() {
+        let path = req.uri().path().to_string();
+        if path.starts_with("/api/auth/") {
+            return next.run(req).await;
+        }
+        if !path.starts_with("/api/") {
+            return next.run(req).await;
+        }
+
+        let (parts, body) = req.into_parts();
+        let should_parse_body = parts
+            .headers
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.contains("application/json"))
+            .unwrap_or(false);
+        let query = parts.uri.query().map(str::to_string);
+        let method = parts.method.clone();
+
+        let (body_value, req) = if should_parse_body {
+            let body_bytes = match to_bytes(body, 2 * 1024 * 1024).await {
+                Ok(bytes) => bytes,
+                Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+            };
+            let body_value = serde_json::from_slice::<Value>(&body_bytes).ok();
+            let request = Request::from_parts(parts, Body::from(body_bytes));
+            (body_value, request)
+        } else {
+            (None, Request::from_parts(parts, body))
+        };
+
+        let permission = match enterprise::permission_for_request(&method, &path) {
+            Some(permission) => permission,
+            None => {
+                let headers = req.headers().clone();
+                match enterprise::fetch_access_context(enterprise_bridge, &headers).await {
+                    Ok(_) => return next.run(req).await,
+                    Err(reason) if reason == "Authentication required" => {
+                        return StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+                }
+            }
+        };
+
+        let payloads =
+            enterprise::build_access_check_requests(permission, &path, query.as_deref(), body_value.as_ref());
+
+        for payload in &payloads {
+            match enterprise::check_access(enterprise_bridge, req.headers(), payload).await {
+                Ok(result) if result.allowed => {}
+                Ok(result) => {
+                    return (StatusCode::FORBIDDEN, result.reason.unwrap_or_else(|| "Forbidden".to_string()))
+                        .into_response();
+                }
+                Err(reason) if reason == "Authentication required" => {
+                    return StatusCode::UNAUTHORIZED.into_response();
+                }
+                Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+            }
+        }
+
+        return next.run(req).await;
+    }
+
     // No password set — allow everything
     if state.password_hash.read().await.is_none() {
         return next.run(req).await;

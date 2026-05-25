@@ -10,6 +10,10 @@ defineProps<{
   recentConnections: ConnectionConfig[];
   appVersion: string;
   hasConnections: boolean;
+  canManageConnections?: boolean;
+  canExecuteQuery?: boolean;
+  canViewHistory?: boolean;
+  canImportConfig?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -83,12 +87,14 @@ const { t } = useI18n();
           </div>
           <div class="grid gap-1 p-2">
             <button
+              v-if="canManageConnections"
               class="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50"
               @click="emit('new-connection')"
             >
               <Plus class="h-4 w-4" /> {{ t("toolbar.newConnection") }}
             </button>
             <button
+              v-if="canExecuteQuery"
               class="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50"
               :disabled="!hasConnections"
               @click="emit('new-query')"
@@ -96,12 +102,14 @@ const { t } = useI18n();
               <FilePlus2 class="h-4 w-4" /> {{ t("toolbar.newQuery") }}
             </button>
             <button
+              v-if="canViewHistory"
               class="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50"
               @click="emit('show-history')"
             >
               <History class="h-4 w-4" /> {{ t("history.title") }}
             </button>
             <button
+              v-if="canImportConfig"
               class="flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted/50"
               @click="emit('import-config')"
             >

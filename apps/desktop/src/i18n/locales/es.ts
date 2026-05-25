@@ -26,6 +26,7 @@ export default {
     passwordChanged: "Contraseña cambiada exitosamente",
     changePasswordFailed: "Error al cambiar la contraseña",
     changePasswordDescription: "Ingresa tu contraseña actual y elige una nueva",
+    permissionDenied: "Tu cuenta no tiene permiso para realizar esta acción",
   },
   toolbar: {
     newConnection: "Nueva conexión",

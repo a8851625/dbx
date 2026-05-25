@@ -1,5 +1,6 @@
 import { isTauriRuntime } from "./tauriRuntime";
 import type * as TauriModule from "./tauri";
+import type { EnterpriseAccessContext } from "./http";
 
 // ---------------------------------------------------------------------------
 // Lazy backend resolution (avoids top-level await)
@@ -218,6 +219,11 @@ export const getAppVersion = forward("getAppVersion");
 export const saveSidebarLayout = forward("saveSidebarLayout");
 export const loadSidebarLayout = forward("loadSidebarLayout");
 
+export async function getEnterpriseAccessContext(): Promise<EnterpriseAccessContext> {
+  const backend = (await getBackend()) as typeof import("./tauri") & typeof import("./http");
+  return backend.getEnterpriseAccessContext();
+}
+
 // ---------------------------------------------------------------------------
 // Re-export all types from tauri.ts (shared between both backends)
 // ---------------------------------------------------------------------------
@@ -261,3 +267,4 @@ export type {
   DatabaseExportRequest,
   ExportProgress,
 } from "./tauri";
+export type { EnterpriseAccessContext, EnterpriseResourcePolicy } from "./http";

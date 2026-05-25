@@ -7,6 +7,7 @@ from app.api.router import api_router
 from app.config import get_settings
 from app.db.session import SessionLocal
 from app.services.auth import AuthService
+from app.services.authorization import AuthorizationService
 
 settings = get_settings()
 
@@ -16,6 +17,7 @@ async def lifespan(_: FastAPI):
     db = SessionLocal()
     try:
         AuthService(settings).sync_default_provider(db)
+        AuthorizationService().sync_builtin_authorization(db)
     finally:
         db.close()
     yield

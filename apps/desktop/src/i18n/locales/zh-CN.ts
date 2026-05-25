@@ -26,6 +26,7 @@ export default {
     passwordChanged: "密码修改成功",
     changePasswordFailed: "密码修改失败",
     changePasswordDescription: "输入当前密码并设置新密码",
+    permissionDenied: "当前账号没有执行该操作的权限",
   },
   toolbar: {
     newConnection: "新建连接",
