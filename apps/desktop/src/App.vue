@@ -813,6 +813,7 @@ function initApp() {
     .catch((e: any) => {
       toast(t("connection.loadFailed", { message: e?.message || String(e) }), 5000);
     });
+  settingsStore.initEditorSettings();
   settingsStore.initAiConfig();
 }
 

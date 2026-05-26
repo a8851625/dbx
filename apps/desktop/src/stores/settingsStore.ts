@@ -10,6 +10,7 @@ import {
 import { normalizeShortcutSettings, type ShortcutSettings } from "@/lib/shortcutRegistry";
 import { normalizeResultPageSize } from "@/lib/paginationPageSize";
 import { normalizeSidebarHiddenTablePrefixes } from "@/lib/sidebarTableNameDisplay";
+import { isTauriRuntime } from "@/lib/tauriRuntime";
 import type { SidebarActivation } from "@/lib/treeNodeClick";
 
 export type AiProvider =
@@ -278,13 +279,13 @@ export function normalizeEditorSettings(settings: Partial<EditorSettings>): Edit
   };
 }
 
-function loadEditorSettings(): EditorSettings {
+function loadLegacyEditorSettings(): { settings: EditorSettings; hasLegacyState: boolean } {
   // Try new format first
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<EditorSettings>;
-      return normalizeEditorSettings(parsed);
+      return { settings: normalizeEditorSettings(parsed), hasLegacyState: true };
     }
   } catch {
     /* ignore */
@@ -300,29 +301,36 @@ function loadEditorSettings(): EditorSettings {
           ...DEFAULT_EDITOR_SETTINGS,
           fontSize: parsed,
         };
-        saveEditorSettings(migrated);
+        persistLegacyEditorSettings(migrated);
         localStorage.removeItem(OLD_FONT_SIZE_KEY);
-        return migrated;
+        return { settings: migrated, hasLegacyState: true };
       }
     }
   } catch {
     /* ignore */
   }
 
-  return { ...DEFAULT_EDITOR_SETTINGS };
+  return { settings: { ...DEFAULT_EDITOR_SETTINGS }, hasLegacyState: false };
 }
 
-function saveEditorSettings(settings: EditorSettings) {
+function persistLegacyEditorSettings(settings: EditorSettings) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
+function clearLegacyEditorSettings() {
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(OLD_FONT_SIZE_KEY);
+}
+
 export const useSettingsStore = defineStore("settings", () => {
+  const isDesktop = isTauriRuntime();
   const aiConfig = ref<AiConfig>(normalizeAiConfig({ provider: "claude" }));
   const isAiConfigLoaded = ref(false);
   const desktopSettings = ref<DesktopSettings>({ ...DEFAULT_DESKTOP_SETTINGS });
   const isDesktopSettingsLoaded = ref(false);
-
-  const editorSettings = ref<EditorSettings>(loadEditorSettings());
+  const { settings: initialEditorSettings } = loadLegacyEditorSettings();
+  const editorSettings = ref<EditorSettings>(initialEditorSettings);
+  const isEditorSettingsLoaded = ref(false);
 
   async function initDesktopSettings() {
     if (isDesktopSettingsLoaded.value) return;
@@ -359,6 +367,30 @@ export const useSettingsStore = defineStore("settings", () => {
     isAiConfigLoaded.value = true;
   }
 
+  async function initEditorSettings() {
+    if (isEditorSettingsLoaded.value) return;
+    if (isDesktop) {
+      isEditorSettingsLoaded.value = true;
+      return;
+    }
+
+    const legacy = loadLegacyEditorSettings();
+    const saved = await api.loadEditorSettings().catch(() => null);
+    if (saved) {
+      editorSettings.value = normalizeEditorSettings(saved as Partial<EditorSettings>);
+      clearLegacyEditorSettings();
+    } else if (legacy.hasLegacyState) {
+      editorSettings.value = legacy.settings;
+      try {
+        await api.saveEditorSettings(editorSettings.value as Record<string, unknown>);
+        clearLegacyEditorSettings();
+      } catch {
+        persistLegacyEditorSettings(editorSettings.value);
+      }
+    }
+    isEditorSettingsLoaded.value = true;
+  }
+
   function updateAiConfig(config: Partial<AiConfig>) {
     const previousProvider = aiConfig.value.provider;
     if (config.provider && config.provider !== previousProvider) {
@@ -382,7 +414,13 @@ export const useSettingsStore = defineStore("settings", () => {
         : {}),
     };
     Object.assign(editorSettings.value, normalizedPartial);
-    saveEditorSettings(editorSettings.value);
+    if (isDesktop) {
+      persistLegacyEditorSettings(editorSettings.value);
+      return;
+    }
+    api.saveEditorSettings(editorSettings.value as Record<string, unknown>).then(clearLegacyEditorSettings).catch(() => {
+      persistLegacyEditorSettings(editorSettings.value);
+    });
   }
 
   function updateColumnFormatter(key: string, formatter: ColumnFormatterConfig | undefined) {
@@ -425,6 +463,8 @@ export const useSettingsStore = defineStore("settings", () => {
     aiConfig,
     isAiConfigLoaded,
     initAiConfig,
+    isEditorSettingsLoaded,
+    initEditorSettings,
     updateAiConfig,
     isConfigured,
     editorSettings,

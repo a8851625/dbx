@@ -301,6 +301,24 @@ def save_desktop_settings(
     return {"ok": True}
 
 
+@router.get("/editor-settings")
+def load_editor_settings(
+    current_user: UserIdentity = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any] | None:
+    return runtime_state_service.load_editor_settings(db, current_user.id)
+
+
+@router.post("/editor-settings")
+def save_editor_settings(
+    payload: dict[str, Any],
+    current_user: UserIdentity = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    runtime_state_service.save_editor_settings(db, current_user.id, dict(payload.get("settings") or {}))
+    return {"ok": True}
+
+
 @router.get("/schema/databases")
 def list_databases(
     connection_id: str = Query(alias="connection_id"),

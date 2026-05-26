@@ -21,3 +21,4 @@ from app.models import auth  # noqa: E402,F401
 from app.models import approval  # noqa: E402,F401
 from app.models import rbac  # noqa: E402,F401
 from app.models import runtime_state  # noqa: E402,F401
+from app.models import system_state  # noqa: E402,F401
