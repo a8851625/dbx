@@ -19,6 +19,7 @@ from app.schemas.access import (
 from app.schemas.auth import CurrentUserResponse
 from app.services.audit import AuditService
 from app.services.authorization import AuthorizationService
+from app.services.config_migration import ConfigMigrationService
 
 router = APIRouter(prefix="/access", tags=["access"])
 
@@ -27,12 +28,18 @@ def get_audit_service() -> AuditService:
     return AuditService()
 
 
+def get_config_migration_service() -> ConfigMigrationService:
+    return ConfigMigrationService()
+
+
 @router.get("/me", response_model=AccessContextResponse)
 def my_access_context(
     current_user: UserIdentity = Depends(get_current_user),
     db: Session = Depends(get_db),
     authorization_service: AuthorizationService = Depends(get_authorization_service),
+    config_migration_service: ConfigMigrationService = Depends(get_config_migration_service),
 ) -> AccessContextResponse:
+    config_migration_service.ensure_auto_import_for_user(db, current_user)
     context = authorization_service.build_access_context(db, current_user)
     return AccessContextResponse(
         user=CurrentUserResponse.model_validate(current_user),

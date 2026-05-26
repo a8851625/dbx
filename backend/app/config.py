@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     app_static_dir: str = "/app/static"
+    dbx_data_dir: str = "/app/data"
     database_url: str = Field(
         default="postgresql+psycopg://dbx:dbx@postgres:5432/dbx_enterprise"
     )
@@ -43,6 +44,9 @@ class Settings(BaseSettings):
     dbx_web_base_url: str = "http://dbx:4224"
     dbx_web_internal_token: str = "dbx-enterprise-internal"
     enterprise_internal_token: str = "dbx-enterprise-internal"
+    config_migration_auto_enabled: bool = True
+    config_migration_auto_source: str = ""
+    config_migration_auto_overwrite_existing: bool = False
     approval_scheduler_interval_seconds: int = 15
     approval_execution_lock_seconds: int = 60 * 30
 

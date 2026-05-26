@@ -1017,6 +1017,14 @@ export async function saveDesktopSettings(settings: DesktopSettings): Promise<vo
   return post("/api/desktop-settings", { settings });
 }
 
+export async function loadEditorSettings(): Promise<Record<string, unknown> | null> {
+  return get("/api/editor-settings");
+}
+
+export async function saveEditorSettings(settings: Record<string, unknown>): Promise<void> {
+  return post("/api/editor-settings", { settings });
+}
+
 export async function loadPinnedTreeNodeIds(): Promise<string[]> {
   return get("/api/app-settings/pinned-tree-node-ids");
 }

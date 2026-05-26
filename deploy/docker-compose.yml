@@ -11,6 +11,7 @@ services:
     environment:
       - APP_PORT=4224
       - APP_STATIC_DIR=/app/static
+      - DBX_DATA_DIR=/app/data
       - ENTERPRISE_INTERNAL_TOKEN=dbx-enterprise-internal
       - DBX_WEB_BASE_URL=http://dbx:4224
       - DBX_WEB_INTERNAL_TOKEN=dbx-enterprise-internal
@@ -21,6 +22,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - dbx-data:/app/data:ro
     restart: unless-stopped
 
   postgres:
@@ -42,3 +45,4 @@ services:
 
 volumes:
   postgres-data:
+  dbx-data:

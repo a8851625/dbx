@@ -22,6 +22,7 @@ class RuntimeStateService:
     PINNED_TREE_NODE_IDS_KEY = "pinned_tree_node_ids"
     AI_CONFIG_KEY = "ai_config"
     DESKTOP_SETTINGS_KEY = "desktop_settings"
+    EDITOR_SETTINGS_KEY = "editor_settings"
 
     def load_connections(self, db: Session, user_id: str) -> list[dict[str, Any]]:
         profiles = db.execute(
@@ -68,35 +69,42 @@ class RuntimeStateService:
         state = db.get(SidebarLayoutState, user_id)
         return None if state is None else (state.layout or {})
 
-    def save_sidebar_layout(self, db: Session, user_id: str, layout: dict[str, Any]) -> None:
+    def save_sidebar_layout(self, db: Session, user_id: str, layout: dict[str, Any], *, commit: bool = True) -> None:
         state = db.get(SidebarLayoutState, user_id)
         if state is None:
             state = SidebarLayoutState(owner_user_id=user_id, layout=layout or {})
             db.add(state)
         else:
             state.layout = layout or {}
-        db.commit()
+        self._commit_or_flush(db, commit=commit)
 
     def load_pinned_tree_node_ids(self, db: Session, user_id: str) -> list[str]:
         value = self._get_preference(db, user_id, self.PINNED_TREE_NODE_IDS_KEY)
         return value if isinstance(value, list) else []
 
-    def save_pinned_tree_node_ids(self, db: Session, user_id: str, ids: list[str]) -> None:
-        self._set_preference(db, user_id, self.PINNED_TREE_NODE_IDS_KEY, ids)
+    def save_pinned_tree_node_ids(self, db: Session, user_id: str, ids: list[str], *, commit: bool = True) -> None:
+        self._set_preference(db, user_id, self.PINNED_TREE_NODE_IDS_KEY, ids, commit=commit)
 
     def load_ai_config(self, db: Session, user_id: str) -> dict[str, Any] | None:
         value = self._get_preference(db, user_id, self.AI_CONFIG_KEY)
         return value if isinstance(value, dict) else None
 
-    def save_ai_config(self, db: Session, user_id: str, config: dict[str, Any]) -> None:
-        self._set_preference(db, user_id, self.AI_CONFIG_KEY, config)
+    def save_ai_config(self, db: Session, user_id: str, config: dict[str, Any], *, commit: bool = True) -> None:
+        self._set_preference(db, user_id, self.AI_CONFIG_KEY, config, commit=commit)
 
     def load_desktop_settings(self, db: Session, user_id: str) -> dict[str, Any]:
         value = self._get_preference(db, user_id, self.DESKTOP_SETTINGS_KEY)
         return value if isinstance(value, dict) else {"show_tray_icon": False}
 
-    def save_desktop_settings(self, db: Session, user_id: str, settings: dict[str, Any]) -> None:
-        self._set_preference(db, user_id, self.DESKTOP_SETTINGS_KEY, settings)
+    def save_desktop_settings(self, db: Session, user_id: str, settings: dict[str, Any], *, commit: bool = True) -> None:
+        self._set_preference(db, user_id, self.DESKTOP_SETTINGS_KEY, settings, commit=commit)
+
+    def load_editor_settings(self, db: Session, user_id: str) -> dict[str, Any] | None:
+        value = self._get_preference(db, user_id, self.EDITOR_SETTINGS_KEY)
+        return value if isinstance(value, dict) else None
+
+    def save_editor_settings(self, db: Session, user_id: str, settings: dict[str, Any], *, commit: bool = True) -> None:
+        self._set_preference(db, user_id, self.EDITOR_SETTINGS_KEY, settings, commit=commit)
 
     def load_saved_sql_library(self, db: Session, user_id: str) -> dict[str, list[dict[str, Any]]]:
         folders = db.execute(
@@ -114,7 +122,14 @@ class RuntimeStateService:
             "files": [self._saved_sql_file_payload(item) for item in files],
         }
 
-    def save_saved_sql_folder(self, db: Session, user_id: str, folder: dict[str, Any]) -> dict[str, Any]:
+    def save_saved_sql_folder(
+        self,
+        db: Session,
+        user_id: str,
+        folder: dict[str, Any],
+        *,
+        commit: bool = True,
+    ) -> dict[str, Any]:
         folder_id = str(folder["id"])
         state = db.get(SavedSqlFolderState, folder_id)
         if state is None:
@@ -131,8 +146,9 @@ class RuntimeStateService:
             state.connection_id = str(folder["connectionId"])
             state.name = str(folder["name"])
             state.updated_at = self._parse_datetime(folder.get("updatedAt")) or datetime.utcnow()
-        db.commit()
-        db.refresh(state)
+        self._commit_or_flush(db, commit=commit)
+        if commit:
+            db.refresh(state)
         return self._saved_sql_folder_payload(state)
 
     def delete_saved_sql_folder(self, db: Session, user_id: str, folder_id: str) -> None:
@@ -148,7 +164,14 @@ class RuntimeStateService:
         db.delete(folder)
         db.commit()
 
-    def save_saved_sql_file(self, db: Session, user_id: str, file: dict[str, Any]) -> dict[str, Any]:
+    def save_saved_sql_file(
+        self,
+        db: Session,
+        user_id: str,
+        file: dict[str, Any],
+        *,
+        commit: bool = True,
+    ) -> dict[str, Any]:
         file_id = str(file["id"])
         state = db.get(SavedSqlFileState, file_id)
         if state is None:
@@ -173,8 +196,9 @@ class RuntimeStateService:
             state.schema_name = file.get("schema")
             state.sql_text = str(file["sql"])
             state.updated_at = self._parse_datetime(file.get("updatedAt")) or datetime.utcnow()
-        db.commit()
-        db.refresh(state)
+        self._commit_or_flush(db, commit=commit)
+        if commit:
+            db.refresh(state)
         return self._saved_sql_file_payload(state)
 
     def delete_saved_sql_file(self, db: Session, user_id: str, file_id: str) -> None:
@@ -184,7 +208,7 @@ class RuntimeStateService:
         db.delete(file)
         db.commit()
 
-    def save_history_entry(self, db: Session, user_id: str, entry: dict[str, Any]) -> None:
+    def save_history_entry(self, db: Session, user_id: str, entry: dict[str, Any], *, commit: bool = True) -> None:
         state = QueryHistoryEntry(
             id=str(entry["id"]),
             owner_user_id=user_id,
@@ -208,7 +232,7 @@ class RuntimeStateService:
             db.delete(existing)
             db.flush()
         db.add(state)
-        db.commit()
+        self._commit_or_flush(db, commit=commit)
 
     def load_history_entries(self, db: Session, user_id: str, limit: int, offset: int) -> list[dict[str, Any]]:
         items = db.execute(
@@ -231,7 +255,14 @@ class RuntimeStateService:
         db.delete(item)
         db.commit()
 
-    def save_ai_conversation(self, db: Session, user_id: str, conversation: dict[str, Any]) -> None:
+    def save_ai_conversation(
+        self,
+        db: Session,
+        user_id: str,
+        conversation: dict[str, Any],
+        *,
+        commit: bool = True,
+    ) -> None:
         conversation_id = str(conversation["id"])
         state = db.get(AiConversationState, conversation_id)
         if state is None:
@@ -252,7 +283,7 @@ class RuntimeStateService:
             state.database_name = str(conversation.get("database") or "")
             state.messages = list(conversation.get("messages") or [])
             state.updated_at = self._parse_datetime(conversation.get("updatedAt")) or datetime.utcnow()
-        db.commit()
+        self._commit_or_flush(db, commit=commit)
 
     def load_ai_conversations(self, db: Session, user_id: str) -> list[dict[str, Any]]:
         items = db.execute(
@@ -276,7 +307,7 @@ class RuntimeStateService:
         ).scalar_one_or_none()
         return None if item is None else item.value
 
-    def _set_preference(self, db: Session, user_id: str, key: str, value: Any) -> None:
+    def _set_preference(self, db: Session, user_id: str, key: str, value: Any, *, commit: bool = True) -> None:
         item = db.execute(
             select(UserPreference)
             .where(UserPreference.owner_user_id == user_id, UserPreference.preference_key == key)
@@ -291,7 +322,7 @@ class RuntimeStateService:
             db.add(item)
         else:
             item.value = value
-        db.commit()
+        self._commit_or_flush(db, commit=commit)
 
     def _preference_id(self, user_id: str, key: str) -> str:
         return hashlib.sha256(f"{user_id}:{key}".encode("utf-8")).hexdigest()[:32]
@@ -372,3 +403,9 @@ class RuntimeStateService:
         if isinstance(value, str):
             return {"raw": value}
         return {"value": value}
+
+    def _commit_or_flush(self, db: Session, *, commit: bool) -> None:
+        if commit:
+            db.commit()
+            return
+        db.flush()

@@ -24,6 +24,7 @@ from app.models.runtime_state import (
     SidebarLayoutState,
     UserPreference,
 )
+from app.models.system_state import LegacyImportJob, SystemSetting
 
 __all__ = [
     "AuditEvent",
@@ -49,8 +50,10 @@ __all__ = [
     "SavedSqlFileState",
     "SavedSqlFolderState",
     "SidebarLayoutState",
+    "SystemSetting",
     "AiConversationState",
     "UserPreference",
+    "LegacyImportJob",
     "UserIdentity",
     "UserRoleBinding",
     "UserSession",

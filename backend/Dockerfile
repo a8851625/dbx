@@ -17,7 +17,8 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    APP_STATIC_DIR=/app/static
+    APP_STATIC_DIR=/app/static \
+    DBX_DATA_DIR=/app/data
 
 WORKDIR /app
 

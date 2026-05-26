@@ -391,6 +391,14 @@ export async function loadDesktopSettings(): Promise<DesktopSettings> {
   return invoke("load_desktop_settings");
 }
 
+export async function loadEditorSettings(): Promise<Record<string, unknown> | null> {
+  return null;
+}
+
+export async function saveEditorSettings(_settings: Record<string, unknown>): Promise<void> {
+  return undefined;
+}
+
 export async function getEnterpriseAccessContext(): Promise<EnterpriseAccessContext> {
   throw new Error("Enterprise access context is only available in web mode");
 }
