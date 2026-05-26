@@ -1,13 +1,12 @@
 # Contributing to DBX
 
-Thanks for helping improve DBX. This repository contains the desktop app, Rust backend, Docker service, documentation site, CLI, MCP server, and optional plugins.
+Thanks for helping improve DBX. This repository contains the web frontend, FastAPI backend, shared Rust database core, documentation site, CLI, MCP server, and optional plugins.
 
 ## Project Layout
 
-- `apps/desktop/` - Vue desktop frontend.
+- `apps/desktop/` - Vue frontend for the browser-based DBX application.
 - `crates/dbx-core/` - shared Rust database core.
-- `crates/dbx-web/` - Docker/web backend service.
-- `src-tauri/` - Tauri desktop shell and native commands.
+- `backend/` - FastAPI application, Alembic migrations, and enterprise web services.
 - `packages/` - Node packages, including CLI, MCP server, shared Node core, and app tests.
 - `plugins/` - optional DBX plugins.
 - `docs/` - documentation site and docs assets.
@@ -19,7 +18,8 @@ Required tools:
 
 - Node.js `>=22.13.0`
 - pnpm `10.27.0`
-- Rust stable
+- Python `3.12`
+- PostgreSQL `>=14` (or Docker Compose for local infra)
 - Java 17, when working on JDBC plugin packaging
 
 Install dependencies:
@@ -28,13 +28,13 @@ Install dependencies:
 pnpm install
 ```
 
-Run the desktop app during development:
+Run the web frontend during development:
 
 ```bash
-pnpm dev:tauri
+pnpm dev:web
 ```
 
-Run the web backend:
+Run the FastAPI backend:
 
 ```bash
 pnpm dev:backend
@@ -46,8 +46,7 @@ Before opening a pull request, run:
 
 ```bash
 pnpm check
-cargo fmt --check
-cargo check --workspace --locked
+cd backend && python3 -m compileall app tests
 ```
 
 For package changes, also run:

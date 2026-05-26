@@ -25,11 +25,6 @@ jobs:
           node-version: 22.13.0
           cache: pnpm
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libsecret-1-dev
-
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
@@ -48,15 +43,31 @@ jobs:
       - name: Node package publish dry run
         run: pnpm publish:dry-run
 
-  rust:
+  backend:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install backend dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libsecret-1-dev
+          python -m pip install --upgrade pip
+          pip install --no-build-isolation -e backend
+
+      - name: Backend compile check
+        run: python -m compileall backend/app backend/tests
+
+      - name: Backend tests
+        run: PYTHONPATH=backend python -m unittest discover -s backend/tests -p 'test_*.py'
+
+  rust:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -73,13 +84,13 @@ jobs:
         run: cargo fmt --check
 
       - name: Cargo clippy
-        run: cargo clippy --workspace --locked
+        run: cargo clippy --workspace
 
       - name: Cargo check
-        run: cargo check --workspace --locked
+        run: cargo check --workspace
 
       - name: Cargo test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace
 
   jdbc:
     runs-on: ubuntu-22.04

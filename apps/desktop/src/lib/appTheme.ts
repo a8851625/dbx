@@ -1,4 +1,4 @@
-import type { Theme } from "@tauri-apps/api/window";
+type WindowTheme = "light" | "dark";
 
 export const APP_THEME_STORAGE_KEY = "dbx-theme";
 
@@ -15,6 +15,6 @@ export function resolveAppThemeAppearance(mode: AppThemeMode, systemPrefersDark:
   return mode;
 }
 
-export function getTauriThemeForMode(mode: AppThemeMode): Theme | null {
+export function getTauriThemeForMode(mode: AppThemeMode): WindowTheme | null {
   return mode === "system" ? null : mode;
 }

@@ -137,43 +137,32 @@ See the [MCP server README](packages/mcp-server/README.md) and [CLI README](pack
 
 ## Install
 
-Download the latest release from the [Releases](https://github.com/t8y2/dbx/releases/latest) page.
-
-**Homebrew (macOS):**
-
-```bash
-brew install --cask t8y2/tap/dbx
-```
-
-**Scoop (Windows):**
-
-```bash
-scoop bucket add dbx https://github.com/t8y2/scoop-bucket
-scoop install dbx
-```
+DBX is now delivered as a browser-based application. Use Docker/Docker Compose for deployment, or run the Vue frontend and FastAPI backend locally during development.
 
 ## Self-Hosted (Docker)
 
-DBX provides a web version that can be deployed via Docker.
-
-```bash
-docker run -d --name dbx -p 4224:4224 -v dbx-data:/app/data t8y2/dbx
-```
-
-Or with Docker Compose. A ready-to-use example lives at `deploy/docker-compose.yml`:
+DBX provides a web version that runs with PostgreSQL. A ready-to-use example lives at `deploy/docker-compose.yml`:
 
 ```yaml
 services:
   dbx:
     image: t8y2/dbx
+    environment:
+      DATABASE_URL: postgresql+psycopg://dbx:dbx@postgres:5432/dbx_enterprise
     ports:
       - "4224:4224"
-    volumes:
-      - dbx-data:/app/data
+    depends_on:
+      - postgres
     restart: unless-stopped
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: dbx_enterprise
+      POSTGRES_USER: dbx
+      POSTGRES_PASSWORD: dbx
 
 volumes:
-  dbx-data:
+  postgres-data:
 ```
 
 Open `http://localhost:4224` in your browser. Multi-arch images (amd64 / arm64) are available.
@@ -184,7 +173,8 @@ Open `http://localhost:4224` in your browser. Multi-arch images (amd64 / arm64) 
 
 - [Node.js](https://nodejs.org/) >= 18
 - [pnpm](https://pnpm.io/)
-- [Rust](https://www.rust-lang.org/tools/install) >= 1.77
+- [Python](https://www.python.org/downloads/) >= 3.12
+- [PostgreSQL](https://www.postgresql.org/) >= 14
 
 #### System Dependencies
 
@@ -194,9 +184,7 @@ No additional dependencies required.
 
 **Linux (Ubuntu/Debian):**
 
-```bash
-sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
-```
+No additional dependencies required.
 
 **Windows:**
 
@@ -206,33 +194,31 @@ No additional dependencies required.
 
 ```bash
 pnpm install
-pnpm dev:tauri
+pnpm dev:web
+pnpm dev:backend
 ```
 
-Web version:
+For a fully containerized local stack:
 
 ```bash
-pnpm dev:web       # frontend
-pnpm dev:backend   # backend
+docker compose -f deploy/docker-compose.yml up --build
 ```
 
 ### Build
 
 ```bash
-pnpm tauri build
+docker build -f backend/Dockerfile -t dbx:local .
 ```
-
-The installer will be in `src-tauri/target/release/bundle/`.
 
 ## Tech Stack
 
 | Layer     | Technology                                                                                                                                                                                                       |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Framework | [Tauri 2](https://tauri.app/)                                                                                                                                                                                    |
+| Runtime   | FastAPI + PostgreSQL                                                                                                                                                                                             |
 | Frontend  | [Vue 3](https://vuejs.org/) + TypeScript                                                                                                                                                                         |
 | UI        | [shadcn-vue](https://www.shadcn-vue.com/) + Tailwind CSS                                                                                                                                                         |
 | Editor    | [CodeMirror 6](https://codemirror.net/)                                                                                                                                                                          |
-| Backend   | Rust + [sqlx](https://github.com/launchbadge/sqlx) / [tiberius](https://github.com/prisma/tiberius) / [redis-rs](https://github.com/redis-rs/redis-rs) / [mongodb](https://github.com/mongodb/mongo-rust-driver) |
+| Backend   | Python 3.12 + FastAPI + SQLAlchemy / Alembic + [psycopg](https://www.psycopg.org/)                                                                                                                             |
 
 ## Community
 

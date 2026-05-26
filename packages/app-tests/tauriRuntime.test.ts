@@ -6,7 +6,7 @@ test("detects plain browser-like globals as non-Tauri runtime", () => {
   assert.equal(isTauriRuntime({}), false);
 });
 
-test("detects Tauri globals", () => {
-  assert.equal(isTauriRuntime({ __TAURI_INTERNALS__: {} }), true);
-  assert.equal(isTauriRuntime({ __TAURI__: {} }), true);
+test("treats legacy Tauri globals as browser runtime after desktop removal", () => {
+  assert.equal(isTauriRuntime({ __TAURI_INTERNALS__: {} }), false);
+  assert.equal(isTauriRuntime({ __TAURI__: {} }), false);
 });

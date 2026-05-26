@@ -1,82 +1,48 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-const appSource = readFileSync("apps/desktop/src/App.vue", "utf8");
-const connectionDialogSource = readFileSync("apps/desktop/src/components/connection/ConnectionDialog.vue", "utf8");
-const driverStoreSource = readFileSync("apps/desktop/src/components/config/DriverStoreDialog.vue", "utf8");
-const exportDialogSource = readFileSync("apps/desktop/src/components/export/DatabaseExportDialog.vue", "utf8");
-const appToolbarSource = readFileSync("apps/desktop/src/components/layout/AppToolbar.vue", "utf8");
-
-function appSourceFiles(dir: string): string[] {
+function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const path = `${dir}/${entry}`;
-    if (statSync(path).isDirectory()) return appSourceFiles(path);
-    return /\.(ts|vue)$/.test(entry) ? [path] : [];
+    if (statSync(path).isDirectory()) return sourceFiles(path);
+    return /\.(ts|vue|md|mdx|json|ya?ml)$/.test(entry) ? [path] : [];
   });
 }
 
-test("web runtime keeps driver store entry accessible from the toolbar", () => {
-  assert.match(appToolbarSource, /@click="emit\('open-driver-store'\)"/);
-  assert.doesNotMatch(appToolbarSource, /<Button\s+v-if="isDesktop"[\s\S]*?@click="emit\('open-driver-store'\)"/);
+test("repo no longer ships the src-tauri desktop shell", () => {
+  assert.equal(existsSync("src-tauri"), false);
 });
 
-test("web runtime handles driver store open events", () => {
-  assert.match(appSource, /showDriverStore\.value = true;/);
-  assert.doesNotMatch(appSource, /if \(!isDesktop\) return;\s+showDriverStore\.value = true;/);
+test("frontend source is free of @tauri-apps imports", () => {
+  const offenders = sourceFiles("apps/desktop/src").filter((path) =>
+    readFileSync(path, "utf8").includes("@tauri-apps"),
+  );
+  assert.deepEqual(offenders, []);
 });
 
-test("web runtime hides desktop-only local database connection types", () => {
-  assert.match(connectionDialogSource, /desktopOnlyDbOptionValues = new Set\(\["sqlite", "duckdb", "access"\]\)/);
-  assert.match(connectionDialogSource, /dbOptions\.filter\(\(option\) => isDesktop \|\| !desktopOnlyDbOptionValues\.has\(option\.value\)\)/);
+test("package scripts and docs advertise the web-only runtime", () => {
+  const packageJson = readFileSync("package.json", "utf8");
+  const readme = readFileSync("README.md", "utf8");
+  const readmeZh = readFileSync("README.zh-CN.md", "utf8");
+
+  assert.doesNotMatch(packageJson, /@tauri-apps/);
+  assert.doesNotMatch(packageJson, /dev:tauri/);
+  assert.doesNotMatch(readme, /dev:tauri|tauri build|src-tauri/);
+  assert.doesNotMatch(readmeZh, /dev:tauri|tauri build|src-tauri/);
 });
 
-test("web runtime can show driver install hints", () => {
-  assert.match(connectionDialogSource, /showAgentDriverInstallHint\(form\.value\.db_type, agentDrivers\.value, selectedType\.value\)/);
-  assert.doesNotMatch(connectionDialogSource, /isDesktop &&\s+showAgentDriverInstallHint/);
+test("deploy Dockerfile builds the FastAPI web image instead of Rust/Tauri artifacts", () => {
+  const dockerfile = readFileSync("deploy/Dockerfile", "utf8");
+
+  assert.match(dockerfile, /FROM python:3\.12-slim/);
+  assert.match(dockerfile, /COPY backend\/app \.\/app/);
+  assert.doesNotMatch(dockerfile, /cargo zigbuild|src-tauri|dbx-web/);
 });
 
-test("driver store uses the shared API instead of direct Tauri calls", () => {
-  assert.doesNotMatch(appSource, /@tauri-apps\/api\/core/);
-  assert.match(appSource, /api\.listInstalledAgents\(/);
-  assert.doesNotMatch(driverStoreSource, /@tauri-apps\/api\/core/);
-  assert.doesNotMatch(driverStoreSource, /@tauri-apps\/api\/event/);
-  assert.match(driverStoreSource, /api\.listInstalledAgents/);
-  assert.match(driverStoreSource, /api\.listenAgentInstallProgress/);
-});
+test("vite dev server proxies all API traffic to the FastAPI backend", () => {
+  const viteConfig = readFileSync("apps/desktop/vite.config.ts", "utf8");
 
-test("web runtime guards desktop-only file drop wiring", () => {
-  const fileDropSource = readFileSync("apps/desktop/src/composables/useFileDrop.ts", "utf8");
-  assert.match(fileDropSource, /if \(!isTauriRuntime\(\)\) return;/);
-  assert.match(fileDropSource, /api\.buildDroppedFilePreviewSql\(\{ path \}\)/);
-});
-
-test("web runtime downloads database export through HTTP endpoint", () => {
-  assert.match(exportDialogSource, /\/api\/export\/database\/download\/\$\{encodeURIComponent\(exportId\.value\)\}/);
-  assert.match(exportDialogSource, /anchor\.download = filePath\.split/);
-});
-
-test("web server stores browser exports under the data dir before download", () => {
-  const exportRouteSource = readFileSync("crates/dbx-web/src/routes/database_export.rs", "utf8");
-  assert.match(exportRouteSource, /requested\.starts_with\("__web_export_"\)/);
-  assert.match(exportRouteSource, /state\.data_dir\.join\("exports"\)\.join\(format!/);
-  assert.match(exportRouteSource, /canonicalize\(path\)/);
-  assert.match(exportRouteSource, /remove\(&export_id\)/);
-  assert.match(exportRouteSource, /remove_file\(&download\.path\)/);
-});
-
-test("web server exposes database export download route", () => {
-  const webMainSource = readFileSync("crates/dbx-web/src/main.rs", "utf8");
-  const exportRouteSource = readFileSync("crates/dbx-web/src/routes/database_export.rs", "utf8");
-  assert.match(webMainSource, /\/export\/database\/download\/\{exportId\}/);
-  assert.match(exportRouteSource, /CONTENT_DISPOSITION/);
-  assert.match(exportRouteSource, /application\/sql; charset=utf-8/);
-});
-
-test("web runtime uses the shared uuid helper instead of direct randomUUID calls", () => {
-  const directRandomUuidCalls = appSourceFiles("apps/desktop/src")
-    .filter((path) => path !== "apps/desktop/src/lib/utils.ts")
-    .filter((path) => readFileSync(path, "utf8").includes("crypto.randomUUID("));
-
-  assert.deepEqual(directRandomUuidCalls, []);
+  assert.match(viteConfig, /target: "http:\/\/localhost:8000"/);
+  assert.doesNotMatch(viteConfig, /TAURI_DEV_HOST|TAURI_ENV_ARCH|localhost:4224/);
 });

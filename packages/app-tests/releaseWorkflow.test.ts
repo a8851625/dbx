@@ -1,9 +1,14 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
-test("release Linux runners install xdg-utils for AppImage bundling", () => {
-  const workflow = readFileSync(".github/workflows/release.yml", "utf8");
+test("desktop release workflow is not shipped anymore", () => {
+  assert.equal(existsSync(".github/workflows/release.yml"), false);
+});
 
-  assert.match(workflow, /sudo apt-get install -y [^\n]*\bxdg-utils\b/);
+test("CI no longer installs AppImage packaging dependencies", () => {
+  const workflow = readFileSync(".github/workflows/ci.yml", "utf8");
+
+  assert.doesNotMatch(workflow, /\bxdg-utils\b/);
+  assert.doesNotMatch(workflow, /\bAppImage\b/);
 });

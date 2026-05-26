@@ -225,25 +225,7 @@ async function loadPreview(fileOrPath: string | File) {
 
 async function selectFile() {
   if (running.value) return;
-  if (!isTauriRuntime()) {
-    fileInput.value?.click();
-    return;
-  }
-  selectingFile.value = true;
-  try {
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: "SQL", extensions: ["sql"] }],
-    });
-    if (typeof selected === "string") {
-      await loadPreview(selected);
-    }
-  } catch (e: any) {
-    toast(e?.message || String(e), 5000);
-  } finally {
-    selectingFile.value = false;
-  }
+  fileInput.value?.click();
 }
 
 async function handleFileInputChange(event: Event) {

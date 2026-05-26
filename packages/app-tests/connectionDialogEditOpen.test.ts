@@ -8,10 +8,9 @@ const appDialogsSource = readFileSync(
 );
 
 test("connection dialog opens when editing connection config is available", () => {
-  assert.match(
-    appDialogsSource,
-    /const shouldShowConnectionDialog = computed\(\(\) => props\.showConnectionDialog \|\| !!editConfig\.value\)/,
-  );
+  assert.match(appDialogsSource, /allowConnectionManagement\?: boolean;/);
+  assert.match(appDialogsSource, /const shouldShowConnectionDialog = computed\(/);
+  assert.match(appDialogsSource, /!!props\.allowConnectionManagement && \(props\.showConnectionDialog \|\| !!editConfig\.value\)/);
   assert.match(appDialogsSource, /:open="shouldShowConnectionDialog"/);
   assert.match(appDialogsSource, /v-if="shouldShowConnectionDialog"/);
 });
@@ -31,8 +30,7 @@ test("connection dialog maps legacy Dameng configs to the DM profile", () => {
 
 test("connection dialog offers DuckDB file creation from the new connection form", () => {
   assert.match(connectionDialogSource, /async function createDuckDbFilePath\(\)/);
-  assert.match(connectionDialogSource, /const \{ save \} = await import\("@tauri-apps\/plugin-dialog"\);/);
-  assert.match(connectionDialogSource, /form\.value\.host = path;/);
+  assert.doesNotMatch(connectionDialogSource, /@tauri-apps/);
   assert.match(connectionDialogSource, /form\.db_type === 'duckdb'/);
   assert.match(connectionDialogSource, /@click="createDuckDbFilePath"/);
 });

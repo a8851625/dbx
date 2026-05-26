@@ -137,43 +137,32 @@ dbx query local "select 1" --json
 
 ## 安装
 
-从 [Releases](https://github.com/t8y2/dbx/releases/latest) 页面下载最新版本。
-
-**Homebrew (macOS)：**
-
-```bash
-brew install --cask t8y2/tap/dbx
-```
-
-**Scoop (Windows)：**
-
-```bash
-scoop bucket add dbx https://github.com/t8y2/scoop-bucket
-scoop install dbx
-```
+DBX 现已收口为纯 Web 交付形态。部署请使用 Docker / Docker Compose，本地开发请分别运行 Vue 前端与 FastAPI 后端。
 
 ## 自托管 (Docker)
 
-DBX 提供 Web 版本，可通过 Docker 部署。
-
-```bash
-docker run -d --name dbx -p 4224:4224 -v dbx-data:/app/data t8y2/dbx
-```
-
-或使用 Docker Compose，示例文件位于 `deploy/docker-compose.yml`：
+DBX 的 Web 版本依赖 PostgreSQL，推荐直接使用 `deploy/docker-compose.yml`：
 
 ```yaml
 services:
   dbx:
     image: t8y2/dbx
+    environment:
+      DATABASE_URL: postgresql+psycopg://dbx:dbx@postgres:5432/dbx_enterprise
     ports:
       - "4224:4224"
-    volumes:
-      - dbx-data:/app/data
+    depends_on:
+      - postgres
     restart: unless-stopped
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: dbx_enterprise
+      POSTGRES_USER: dbx
+      POSTGRES_PASSWORD: dbx
 
 volumes:
-  dbx-data:
+  postgres-data:
 ```
 
 浏览器访问 `http://localhost:4224`。支持 amd64 / arm64 双架构镜像。
@@ -184,7 +173,8 @@ volumes:
 
 - [Node.js](https://nodejs.org/) >= 18
 - [pnpm](https://pnpm.io/)
-- [Rust](https://www.rust-lang.org/tools/install) >= 1.77
+- [Python](https://www.python.org/downloads/) >= 3.12
+- [PostgreSQL](https://www.postgresql.org/) >= 14
 
 #### 系统依赖
 
@@ -194,9 +184,7 @@ volumes:
 
 **Linux (Ubuntu/Debian)：**
 
-```bash
-sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
-```
+无需额外安装。
 
 **Windows：**
 
@@ -206,33 +194,31 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libappindicator3-dev 
 
 ```bash
 pnpm install
-pnpm dev:tauri
+pnpm dev:web
+pnpm dev:backend
 ```
 
-Web 版本：
+如需一键拉起完整本地栈：
 
 ```bash
-pnpm dev:web       # 前端
-pnpm dev:backend   # 后端
+docker compose -f deploy/docker-compose.yml up --build
 ```
 
-### 构建
+### 构建镜像
 
 ```bash
-pnpm tauri build
+docker build -f backend/Dockerfile -t dbx:local .
 ```
-
-安装包输出在 `src-tauri/target/release/bundle/` 目录。
 
 ## 技术栈
 
 | 层级 | 技术 |
 |------|------|
-| 框架 | [Tauri 2](https://tauri.app/) |
+| 运行时 | FastAPI + PostgreSQL |
 | 前端 | [Vue 3](https://vuejs.org/) + TypeScript |
 | UI | [shadcn-vue](https://www.shadcn-vue.com/) + Tailwind CSS |
 | 编辑器 | [CodeMirror 6](https://codemirror.net/) |
-| 后端 | Rust + [sqlx](https://github.com/launchbadge/sqlx) / [tiberius](https://github.com/prisma/tiberius) / [redis-rs](https://github.com/redis-rs/redis-rs) / [mongodb](https://github.com/mongodb/mongo-rust-driver) |
+| 后端 | Python 3.12 + FastAPI + SQLAlchemy / Alembic + [psycopg](https://www.psycopg.org/) |
 
 ## 社区
 

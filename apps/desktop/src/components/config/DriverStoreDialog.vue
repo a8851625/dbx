@@ -184,15 +184,7 @@ async function saveJavaRuntimeConfig() {
 }
 
 async function chooseCustomJavaPath() {
-  if (isWeb) return;
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({
-    title: "选择 Java 可执行文件",
-    multiple: false,
-  });
-  if (typeof selected === "string") {
-    customJavaPath.value = selected;
-  }
+  return;
 }
 
 async function installDriver(dbType: string) {
@@ -276,17 +268,7 @@ function chooseWebOfflineZip(): Promise<File | null> {
 async function importOfflineZip() {
   if (importingZip.value) return;
   let selected: string | File | null = null;
-  if (isWeb) {
-    selected = await chooseWebOfflineZip();
-  } else {
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const path = await open({
-      title: "选择离线驱动包",
-      multiple: false,
-      filters: [{ name: "ZIP", extensions: ["zip"] }],
-    });
-    selected = typeof path === "string" ? path : null;
-  }
+  selected = await chooseWebOfflineZip();
   if (!selected) return;
   importingZip.value = true;
   progress.value = null;
@@ -303,22 +285,8 @@ async function importOfflineZip() {
 }
 
 async function importDriverJar(dbType: string) {
-  if (isWeb) return;
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({
-    title: "选择驱动 JAR 文件",
-    multiple: false,
-    filters: [{ name: "JAR", extensions: ["jar"] }],
-  });
-  if (typeof selected !== "string") return;
-  const label = drivers.value.find((d) => d.db_type === dbType)?.label ?? dbType;
-  try {
-    await api.importAgentJar(dbType, selected);
-    await refreshAgents();
-    toast(`${label} 驱动导入成功`);
-  } catch (e: any) {
-    toast(`${label} 驱动导入失败: ${e}`);
-  }
+  void dbType;
+  return;
 }
 
 async function reinstallJre(jreKey: string) {
@@ -420,24 +388,7 @@ async function installJdbcPlugin() {
 
 async function installJdbcPluginLocal() {
   if (isWeb || isInstallingJdbcPlugin.value) return;
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({
-    title: "选择 JDBC 插件 zip 文件",
-    multiple: false,
-    filters: [{ name: "ZIP", extensions: ["zip"] }],
-  });
-  if (typeof selected !== "string") return;
-  isInstallingJdbcPlugin.value = true;
-  try {
-    jdbcPluginStatus.value = await api.installJdbcPluginLocal(selected);
-    emitDriverUpdateCount();
-    toast(t("settings.jdbcPluginInstallSuccess"));
-    await loadJdbcDrivers();
-  } catch (e: any) {
-    toast(String(e?.message || e), 5000);
-  } finally {
-    isInstallingJdbcPlugin.value = false;
-  }
+  return;
 }
 
 async function uninstallJdbcPlugin() {
@@ -469,18 +420,7 @@ async function importJdbcDriverPaths(paths: string[]) {
 
 async function importJdbcDrivers() {
   if (isWeb) return;
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({
-    title: t("settings.jdbcImport"),
-    multiple: true,
-    filters: [{ name: "JDBC Driver", extensions: ["jar"] }],
-  });
-  if (!selected) return;
-
-  const paths = (Array.isArray(selected) ? selected : [selected]).filter(
-    (path): path is string => typeof path === "string",
-  );
-  await importJdbcDriverPaths(paths);
+  return;
 }
 
 async function importJdbcDriverPathInput() {

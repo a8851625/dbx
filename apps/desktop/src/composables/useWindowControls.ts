@@ -1,5 +1,4 @@
 import { ref, onMounted, onUnmounted } from "vue";
-import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { isMacOS } from "@/lib/platform";
 
 export function shouldReserveMacTrafficLightInset(isMac: boolean, isFullscreen: boolean): boolean {
@@ -10,49 +9,18 @@ export function useWindowControls() {
   const isMaximized = ref(false);
   const isFullscreen = ref(false);
   const isMac = isMacOS();
-  const isDesktop = isTauriRuntime();
-  const showControls = isDesktop && !isMac;
+  const isDesktop = false;
+  const showControls = false;
 
-  let unlisten: (() => void) | null = null;
+  async function minimize() {}
 
-  async function updateWindowState() {
-    if (!isDesktop) return;
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    const currentWindow = getCurrentWindow();
-    const [maximized, fullscreen] = await Promise.all([currentWindow.isMaximized(), currentWindow.isFullscreen()]);
-    isMaximized.value = maximized;
-    isFullscreen.value = fullscreen;
-  }
+  async function toggleMaximize() {}
 
-  async function minimize() {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().minimize();
-  }
+  async function close() {}
 
-  async function toggleMaximize() {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().toggleMaximize();
-    setTimeout(updateWindowState, 50);
-  }
+  onMounted(() => {});
 
-  async function close() {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().close();
-  }
-
-  onMounted(async () => {
-    if (!isDesktop) return;
-    await updateWindowState();
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    const unlistenFn = await getCurrentWindow().onResized(() => {
-      void updateWindowState();
-    });
-    unlisten = unlistenFn;
-  });
-
-  onUnmounted(() => {
-    unlisten?.();
-  });
+  onUnmounted(() => {});
 
   return {
     isMac,

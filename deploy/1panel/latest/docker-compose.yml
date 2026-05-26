@@ -5,14 +5,38 @@ services:
     ports:
       - "${PANEL_APP_PORT_HTTP}:4224"
     environment:
-      - DBX_PASSWORD=${PANEL_DB_PASSWORD}
+      - APP_PORT=4224
+      - DATABASE_URL=postgresql+psycopg://dbx:${PANEL_PG_PASSWORD}@postgres:5432/dbx_enterprise
+      - OIDC_REDIRECT_URI=${PANEL_APP_PROTOCOL}://${PANEL_APP_HOST}:${PANEL_APP_PORT_HTTP}/api/v1/auth/callback
+      - OIDC_POST_LOGOUT_REDIRECT_URI=${PANEL_APP_PROTOCOL}://${PANEL_APP_HOST}:${PANEL_APP_PORT_HTTP}/login
     volumes:
       - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - 1panel-network
     labels:
       createdBy: "Apps"
+
+  postgres:
+    image: postgres:16
+    container_name: ${CONTAINER_NAME}-postgres
+    environment:
+      - POSTGRES_DB=dbx_enterprise
+      - POSTGRES_USER=dbx
+      - POSTGRES_PASSWORD=${PANEL_PG_PASSWORD}
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbx -d dbx_enterprise"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - 1panel-network
 
 networks:
   1panel-network:

@@ -125,12 +125,7 @@ function onDoubleClick() {
 }
 
 async function openExternal() {
-  try {
-    const { open } = await import("@tauri-apps/plugin-shell");
-    await open(props.src);
-  } catch {
-    window.open(props.src, "_blank", "noopener,noreferrer");
-  }
+  window.open(props.src, "_blank", "noopener,noreferrer");
 }
 
 watch(

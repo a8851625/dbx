@@ -99,7 +99,6 @@ function onToolbarDblClick(e: MouseEvent) {
   <div
     class="h-10 flex items-center gap-1 px-2 border-b bg-muted/30 shrink-0"
     :class="{ 'pl-17.5': shouldReserveMacTrafficLightInset(isMac, isFullscreen) }"
-    data-tauri-drag-region
     @dblclick="onToolbarDblClick"
   >
     <Button
@@ -214,7 +213,7 @@ function onToolbarDblClick(e: MouseEvent) {
       </span>
     </Button>
 
-    <div class="flex-1" data-tauri-drag-region />
+    <div class="flex-1" />
 
     <Tooltip v-if="canViewHistory">
       <TooltipTrigger as-child>

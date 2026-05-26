@@ -69,7 +69,6 @@ import {
 } from "@/lib/objectSourceEditor";
 import { buildRenameObjectSql, supportsObjectRename } from "@/lib/objectRenameSql";
 import { buildViewDdl } from "@/lib/viewDdl";
-import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { copyToClipboard } from "@/lib/clipboard";
 import { formatSqlInsert } from "@/lib/exportFormats";
 import { fetchTableDataForExport } from "@/lib/tableDataExport";
@@ -485,24 +484,14 @@ function closeSource() {
   sourceSaveError.value = "";
 }
 
-async function saveFileContent(content: string, defaultFileName: string, filterName: string, filterExt: string) {
-  if (isTauriRuntime()) {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    const path = await save({
-      defaultPath: defaultFileName,
-      filters: [{ name: filterName, extensions: [filterExt] }],
-    });
-    if (path) await writeTextFile(path, content);
-  } else {
-    const blob = new Blob([content], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = defaultFileName;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+async function saveFileContent(content: string, defaultFileName: string) {
+  const blob = new Blob([content], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = defaultFileName;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function openViewData(row: ObjectBrowserRow) {
@@ -560,7 +549,7 @@ async function exportStructure(row: ObjectBrowserRow) {
   try {
     const schema = row.schema || selectedSchema.value || props.database;
     const ddl = await api.getTableDdl(props.connection.id, props.database, schema, row.name);
-    await saveFileContent(ddl + "\n", `${row.name}.sql`, "SQL", "sql");
+    await saveFileContent(ddl + "\n", `${row.name}.sql`);
   } catch (e: any) {
     console.error("Export structure failed:", e);
   }
@@ -584,32 +573,14 @@ async function exportData(row: ObjectBrowserRow, format: "csv" | "json" | "sql")
     });
 
     if (format === "csv") {
-      let outputPath = `${row.name}.csv`;
-      if (isTauriRuntime()) {
-        const { save } = await import("@tauri-apps/plugin-dialog");
-        const path = await save({
-          defaultPath: outputPath,
-          filters: [{ name: "CSV", extensions: ["csv"] }],
-        });
-        if (!path) return;
-        outputPath = path as string;
-      }
+      const outputPath = `${row.name}.csv`;
       await api.exportQueryResultCsv(outputPath, result.columns, result.rows);
       toast(t("grid.exported"));
       return;
     }
 
     if (format === "json") {
-      let outputPath = `${row.name}.json`;
-      if (isTauriRuntime()) {
-        const { save } = await import("@tauri-apps/plugin-dialog");
-        const path = await save({
-          defaultPath: outputPath,
-          filters: [{ name: "JSON", extensions: ["json"] }],
-        });
-        if (!path) return;
-        outputPath = path as string;
-      }
+      const outputPath = `${row.name}.json`;
       await api.exportQueryResultJson(outputPath, result.columns, result.rows);
       toast(t("grid.exported"));
       return;
@@ -622,7 +593,7 @@ async function exportData(row: ObjectBrowserRow, format: "csv" | "json" | "sql")
       columns: result.columns,
       rows: result.rows,
     });
-    await saveFileContent(content, `${row.name}.sql`, "SQL", "sql");
+    await saveFileContent(content, `${row.name}.sql`);
     toast(t("grid.exported"));
   } catch (e: any) {
     toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
@@ -646,16 +617,7 @@ async function exportDataXlsx(row: ObjectBrowserRow) {
       executePage: (sql) => api.executeQuery(props.connection.id, props.database, sql),
     });
 
-    let outputPath = `${row.name}.xlsx`;
-    if (isTauriRuntime()) {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const path = await save({
-        defaultPath: outputPath,
-        filters: [{ name: "Excel", extensions: ["xlsx"] }],
-      });
-      if (!path) return;
-      outputPath = path as string;
-    }
+    const outputPath = `${row.name}.xlsx`;
     await api.exportQueryResultXlsx(outputPath, row.name, result.columns, result.rows);
     toast(t("grid.exported"));
   } catch (e: any) {

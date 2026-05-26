@@ -1488,24 +1488,13 @@ export const useConnectionStore = defineStore("connection", () => {
     const payload = await encryptConfig(json, passphrase);
     const content = JSON.stringify(payload, null, 2);
 
-    if (isTauriRuntime()) {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-      const path = await save({
-        filters: [{ name: "JSON", extensions: ["json"] }],
-        defaultPath: "dbx-connections.json",
-      });
-      if (!path) return;
-      await writeTextFile(path, content);
-    } else {
-      const blob = new Blob([content], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "dbx-connections.json";
-      a.click();
-      URL.revokeObjectURL(url);
-    }
+    const blob = new Blob([content], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "dbx-connections.json";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function bytesToBase64(bytes: Uint8Array) {
@@ -1517,58 +1506,33 @@ export const useConnectionStore = defineStore("connection", () => {
     return btoa(binary);
   }
 
-  function siblingCredentialsPath(path: string) {
-    const fileName = path.split(/[\\/]/).pop() || "";
-    const credentialsFile = fileName.startsWith("data-sources-")
-      ? fileName.replace(/^data-sources/, "credentials-config")
-      : "credentials-config.json";
-    return path.replace(/[^\\/]+$/, credentialsFile);
-  }
-
   async function readDbeaverImportFile(): Promise<{ content: string; encrypted: boolean } | null> {
     let dataSources: string;
     let credentialsBase64 = "";
 
-    if (isTauriRuntime()) {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const { readTextFile, readFile } = await import("@tauri-apps/plugin-fs");
-      const path = await open({
-        filters: [{ name: "DBeaver Data Sources", extensions: ["json"] }],
-        multiple: false,
-      });
-      if (!path) return null;
-      const dataSourcesPath = path as string;
-      dataSources = await readTextFile(dataSourcesPath);
-      try {
-        credentialsBase64 = bytesToBase64(await readFile(siblingCredentialsPath(dataSourcesPath)));
-      } catch {
-        credentialsBase64 = "";
-      }
-    } else {
-      const files = await new Promise<FileList>((resolve, reject) => {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = ".json";
-        input.multiple = true;
-        input.onchange = () => {
-          if (!input.files?.length) {
-            reject(new Error("No file selected"));
-            return;
-          }
-          resolve(input.files);
-        };
-        input.click();
-      });
-      const fileList = Array.from(files);
-      const dataSourcesFile =
-        fileList.find((file) => /^data-sources.*\.json$/i.test(file.name)) ||
-        fileList.find((file) => !/^credentials-config.*\.json$/i.test(file.name));
-      const credentialsFile = fileList.find((file) => /^credentials-config.*\.json$/i.test(file.name));
-      if (!dataSourcesFile) throw new Error("Select DBeaver data-sources.json");
-      dataSources = await dataSourcesFile.text();
-      if (credentialsFile) {
-        credentialsBase64 = bytesToBase64(new Uint8Array(await credentialsFile.arrayBuffer()));
-      }
+    const files = await new Promise<FileList>((resolve, reject) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = ".json";
+      input.multiple = true;
+      input.onchange = () => {
+        if (!input.files?.length) {
+          reject(new Error("No file selected"));
+          return;
+        }
+        resolve(input.files);
+      };
+      input.click();
+    });
+    const fileList = Array.from(files);
+    const dataSourcesFile =
+      fileList.find((file) => /^data-sources.*\.json$/i.test(file.name)) ||
+      fileList.find((file) => !/^credentials-config.*\.json$/i.test(file.name));
+    const credentialsFile = fileList.find((file) => /^credentials-config.*\.json$/i.test(file.name));
+    if (!dataSourcesFile) throw new Error("Select DBeaver data-sources.json");
+    dataSources = await dataSourcesFile.text();
+    if (credentialsFile) {
+      credentialsBase64 = bytesToBase64(new Uint8Array(await credentialsFile.arrayBuffer()));
     }
 
     return {
@@ -1582,37 +1546,23 @@ export const useConnectionStore = defineStore("connection", () => {
 
     let content: string;
 
-    if (isTauriRuntime()) {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const { readTextFile } = await import("@tauri-apps/plugin-fs");
-      const path = await open({
-        filters:
-          source === "navicat"
-            ? [{ name: "Navicat Connection Export", extensions: ["ncx", "xml"] }]
-            : [{ name: "DBX JSON", extensions: ["json"] }],
-        multiple: false,
-      });
-      if (!path) return null;
-      content = await readTextFile(path as string);
-    } else {
-      content = await new Promise<string>((resolve, reject) => {
-        const input = document.createElement("input");
-        input.type = "file";
-        input.accept = source === "navicat" ? ".ncx,.xml" : ".json";
-        input.onchange = () => {
-          const file = input.files?.[0];
-          if (!file) {
-            reject(new Error("No file selected"));
-            return;
-          }
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(reader.error);
-          reader.readAsText(file);
-        };
-        input.click();
-      });
-    }
+    content = await new Promise<string>((resolve, reject) => {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = source === "navicat" ? ".ncx,.xml" : ".json";
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (!file) {
+          reject(new Error("No file selected"));
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(file);
+      };
+      input.click();
+    });
 
     if (content.trimStart().startsWith("<")) {
       return { content, encrypted: false };

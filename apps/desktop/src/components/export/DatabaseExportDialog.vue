@@ -174,30 +174,7 @@ async function startExport() {
 
   exportId.value = generateDatabaseExportId();
 
-  let filePath = "";
-
-  if (isTauriRuntime()) {
-    try {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const safeName = (database.value || "database").replace(/[\\/:*?"<>|]+/g, "_").trim();
-      const path = await save({
-        defaultPath: `${safeName}.sql`,
-        filters: [{ name: "SQL", extensions: ["sql"] }],
-      });
-      if (!path) {
-        isExporting.value = false;
-        return;
-      }
-      filePath = path;
-    } catch (e: any) {
-      isExporting.value = false;
-      toast(e?.message || String(e), 5000);
-      return;
-    }
-  } else {
-    // Web mode: use a temp path; the server will handle the file
-    filePath = `__web_export_${exportId.value}.sql`;
-  }
+  const filePath = `__web_export_${exportId.value}.sql`;
 
   const request: api.DatabaseExportRequest = {
     exportId: exportId.value,

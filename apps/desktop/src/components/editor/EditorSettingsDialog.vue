@@ -284,11 +284,7 @@ function settingsCategoryButton(value: SettingsCategory): string {
 }
 
 function openExternalUrl(url: string) {
-  if (isTauriRuntime()) {
-    import("@tauri-apps/plugin-shell").then(({ open }) => open(url));
-  } else {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 watch(

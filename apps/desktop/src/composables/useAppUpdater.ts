@@ -1,7 +1,5 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { isTauriRuntime } from "@/lib/tauriRuntime";
-import { useToast } from "@/composables/useToast";
 import * as api from "@/lib/api";
 
 export function shouldOpenUpdateDialog(options: { silent?: boolean }) {
@@ -10,7 +8,6 @@ export function shouldOpenUpdateDialog(options: { silent?: boolean }) {
 
 export function useAppUpdater() {
   const { t } = useI18n();
-  const { toast } = useToast();
 
   const checkingUpdates = ref(false);
   const updateInfo = ref<api.UpdateInfo | null>(null);
@@ -23,11 +20,7 @@ export function useAppUpdater() {
   const latestReleaseUrl = "https://github.com/t8y2/dbx/releases/latest";
 
   function openUrl(url: string) {
-    if (isTauriRuntime()) {
-      import("@tauri-apps/plugin-shell").then(({ open }) => open(url));
-    } else {
-      window.open(url, "_blank");
-    }
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   async function checkUpdates(options: { silent?: boolean } = {}) {
@@ -69,41 +62,12 @@ export function useAppUpdater() {
   }
 
   async function downloadAndInstallUpdate() {
-    if (!isTauriRuntime() || isDownloadingUpdate.value) return;
-    isDownloadingUpdate.value = true;
-    downloadProgress.value = 0;
-    try {
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
-      if (!update) return;
-      let totalBytes = 0;
-      let downloadedBytes = 0;
-      await update.downloadAndInstall((event) => {
-        if (event.event === "Started" && event.data.contentLength) {
-          totalBytes = event.data.contentLength;
-        } else if (event.event === "Progress") {
-          downloadedBytes += event.data.chunkLength;
-          downloadProgress.value = totalBytes > 0 ? Math.round((downloadedBytes / totalBytes) * 100) : 0;
-        } else if (event.event === "Finished") {
-          downloadProgress.value = 100;
-        }
-      });
-      updateReady.value = true;
-    } catch (e: any) {
-      toast(t("updates.downloadFailed", { error: e?.message || String(e) }), 5000);
-    } finally {
-      isDownloadingUpdate.value = false;
-    }
+    if (isDownloadingUpdate.value) return;
+    openLatestRelease();
   }
 
   async function restartApp() {
-    if (!isTauriRuntime()) return;
-    try {
-      const { relaunch } = await import("@tauri-apps/plugin-process");
-      await relaunch();
-    } catch (e: any) {
-      toast(t("updates.restartFailed", { error: e?.message || String(e) }), 5000);
-    }
+    openLatestRelease();
   }
 
   return {

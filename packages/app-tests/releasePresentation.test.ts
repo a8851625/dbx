@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 import test from "node:test";
 
@@ -9,8 +9,6 @@ test("settings about panel uses the app version prop instead of a hard-coded ver
   assert.match(source, /appVersion/);
 });
 
-test("release workflow does not publish the default Tauri release body", () => {
-  const source = readFileSync(".github/workflows/release.yml", "utf8");
-
-  assert.equal(source.includes("See the assets below to download and install."), false);
+test("desktop release workflow is removed from the web-only runtime", () => {
+  assert.equal(existsSync(".github/workflows/release.yml"), false);
 });

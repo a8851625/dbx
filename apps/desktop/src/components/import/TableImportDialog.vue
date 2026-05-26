@@ -143,23 +143,7 @@ async function loadPreview(fileOrPath: string | File) {
 }
 
 async function selectFile() {
-  if (!isTauriRuntime()) {
-    fileInput.value?.click();
-    return;
-  }
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({
-    multiple: false,
-    filters: [
-      { name: "Data files", extensions: ["csv", "tsv", "json", "xlsx", "xlsm", "xls"] },
-      { name: "CSV", extensions: ["csv", "tsv"] },
-      { name: "JSON", extensions: ["json"] },
-      { name: "Excel", extensions: ["xlsx", "xlsm", "xls"] },
-    ],
-  });
-  if (!selected || Array.isArray(selected)) return;
-
-  await loadPreview(selected);
+  fileInput.value?.click();
 }
 
 async function handleFileInputChange(event: Event) {

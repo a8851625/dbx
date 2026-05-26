@@ -1,12 +1,10 @@
 import { computed, ref } from "vue";
 import {
   APP_THEME_STORAGE_KEY,
-  getTauriThemeForMode,
   normalizeAppThemeMode,
   resolveAppThemeAppearance,
   type AppThemeMode,
 } from "@/lib/appTheme";
-import { isTauriRuntime } from "@/lib/tauriRuntime";
 
 const themeMode = ref<AppThemeMode>(
   normalizeAppThemeMode(typeof localStorage === "undefined" ? null : localStorage.getItem(APP_THEME_STORAGE_KEY)),
@@ -16,8 +14,6 @@ const isDark = computed(() => resolveAppThemeAppearance(themeMode.value, systemP
 
 let mediaQuery: MediaQueryList | null = null;
 let isListeningForSystemTheme = false;
-let cachedTauriWindow: typeof import("@tauri-apps/api/window") | null = null;
-
 function readSystemPrefersDark() {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -49,21 +45,6 @@ function applyTheme() {
   doc.offsetHeight; // eslint-disable-line @typescript-eslint/no-unused-expressions
   requestAnimationFrame(() => doc.classList.remove("disable-transitions"));
 
-  if (!isTauriRuntime()) return;
-  if (cachedTauriWindow) {
-    cachedTauriWindow
-      .getCurrentWindow()
-      .setTheme(getTauriThemeForMode(themeMode.value))
-      .catch(() => {});
-  } else {
-    import("@tauri-apps/api/window").then((mod) => {
-      cachedTauriWindow = mod;
-      mod
-        .getCurrentWindow()
-        .setTheme(getTauriThemeForMode(themeMode.value))
-        .catch(() => {});
-    });
-  }
 }
 
 function setThemeMode(mode: AppThemeMode) {

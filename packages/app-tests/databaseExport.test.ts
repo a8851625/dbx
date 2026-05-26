@@ -44,9 +44,10 @@ test("SQL export callers await backend INSERT builders", () => {
 });
 
 test("shared API exposes backend database export SQL builders", () => {
-  assert.match(apiSource, /export const buildExportInsertStatements = forward\("buildExportInsertStatements"\)/);
-  assert.match(apiSource, /export const buildExportSqlInsert = forward\("buildExportSqlInsert"\)/);
-  assert.match(apiSource, /export const buildDatabaseSqlExport = forward\("buildDatabaseSqlExport"\)/);
+  assert.match(apiSource, /export \* from "\.\/http";/);
+  assert.match(httpSource, /export async function buildExportInsertStatements/);
+  assert.match(httpSource, /export async function buildExportSqlInsert/);
+  assert.match(httpSource, /export async function buildDatabaseSqlExport/);
   assert.match(tauriSource, /invoke\("build_export_insert_statements"/);
   assert.match(tauriSource, /invoke\("build_export_sql_insert"/);
   assert.match(tauriSource, /invoke\("build_database_sql_export"/);

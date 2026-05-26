@@ -89,10 +89,7 @@ import { formatSqlInsert } from "@/lib/exportFormats";
 import { fetchTableDataForExport } from "@/lib/tableDataExport";
 import {
   buildCreateDatabaseSql,
-  buildDuckDbAttachDatabaseSql,
-  duckDbAttachedDatabaseNameFromPath,
   supportsCreateDatabaseCharset,
-  uniqueDuckDbAttachedDatabaseName,
 } from "@/lib/createDatabaseSql";
 import {
   buildCreateSchemaSql,
@@ -114,7 +111,6 @@ import { focusSidebarRenameInput, shouldPreventRenameCloseAutoFocus } from "@/li
 import { hasTreeNodeDatabaseContext } from "@/lib/treeNodeContext";
 import { sidebarDisplayTableName } from "@/lib/sidebarTableNameDisplay";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
-import { isTauriRuntime } from "@/lib/tauriRuntime";
 import { copyToClipboard } from "@/lib/clipboard";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import ConnectionErrorIndicator from "@/components/connection/ConnectionErrorIndicator.vue";
@@ -1040,48 +1036,10 @@ function openCreateDatabaseDialog() {
   showCreateDatabaseDialog.value = true;
 }
 
-function ensureDuckDbFileExtension(path: string): string {
-  return /\.(duckdb|db)$/i.test(path) ? path : `${path}.duckdb`;
-}
-
 async function createDuckDbAttachedDatabaseFile() {
   const node = props.node;
   if (!node.connectionId) return;
-  if (!isTauriRuntime()) {
-    toast(t("contextMenu.createDuckDbFileDesktopOnly"), 4000);
-    return;
-  }
-
-  try {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const selectedPath = await save({
-      defaultPath: "database.duckdb",
-      filters: [{ name: "DuckDB", extensions: ["duckdb", "db"] }],
-    });
-    if (!selectedPath) return;
-
-    const path = ensureDuckDbFileExtension(selectedPath);
-    await connectionStore.ensureConnected(node.connectionId);
-    const existingDatabases = await api.listDatabases(node.connectionId);
-    const name = uniqueDuckDbAttachedDatabaseName(
-      duckDbAttachedDatabaseNameFromPath(path),
-      existingDatabases.map((database) => database.name),
-    );
-    await api.executeQuery(node.connectionId, "", await buildDuckDbAttachDatabaseSql(path, name));
-
-    const config = connectionStore.getConfig(node.connectionId);
-    if (config) {
-      await connectionStore.updateConnection({
-        ...config,
-        attached_databases: [...(config.attached_databases ?? []), { name, path }],
-      });
-    }
-    await connectionStore.loadDatabases(node.connectionId, { force: true });
-    connectionStore.selectedTreeNodeId = `${node.connectionId}:${name}`;
-    toast(t("contextMenu.createDuckDbFileSuccess", { name }), 3000);
-  } catch (e: any) {
-    toast(t("contextMenu.tableOperationFailed", { message: e?.message || String(e) }), 5000);
-  }
+  toast(t("contextMenu.createDuckDbFileDesktopOnly"), 4000);
 }
 
 async function confirmCreateDatabase() {
@@ -1248,24 +1206,14 @@ function createTable() {
   };
 }
 
-async function saveFileContent(content: string, defaultFileName: string, filterName: string, filterExt: string) {
-  if (isTauriRuntime()) {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
-    const path = await save({
-      defaultPath: defaultFileName,
-      filters: [{ name: filterName, extensions: [filterExt] }],
-    });
-    if (path) await writeTextFile(path, content);
-  } else {
-    const blob = new Blob([content], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = defaultFileName;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+async function saveFileContent(content: string, defaultFileName: string) {
+  const blob = new Blob([content], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = defaultFileName;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 async function exportStructure() {
@@ -1274,7 +1222,7 @@ async function exportStructure() {
   try {
     await connectionStore.ensureConnected(node.connectionId);
     const ddl = await api.getTableDdl(node.connectionId, node.database, node.schema || node.database, node.label);
-    await saveFileContent(ddl + "\n", `${node.label}.sql`, "SQL", "sql");
+    await saveFileContent(ddl + "\n", `${node.label}.sql`);
   } catch (e: any) {
     console.error("Export structure failed:", e);
   }
@@ -1305,32 +1253,14 @@ async function exportData(format: "csv" | "json" | "sql") {
     });
 
     if (format === "csv") {
-      let outputPath = `${node.label}.csv`;
-      if (isTauriRuntime()) {
-        const { save } = await import("@tauri-apps/plugin-dialog");
-        const path = await save({
-          defaultPath: outputPath,
-          filters: [{ name: "CSV", extensions: ["csv"] }],
-        });
-        if (!path) return;
-        outputPath = path as string;
-      }
+      const outputPath = `${node.label}.csv`;
       await api.exportQueryResultCsv(outputPath, result.columns, result.rows);
       toast(t("grid.exported"));
       return;
     }
 
     if (format === "json") {
-      let outputPath = `${node.label}.json`;
-      if (isTauriRuntime()) {
-        const { save } = await import("@tauri-apps/plugin-dialog");
-        const path = await save({
-          defaultPath: outputPath,
-          filters: [{ name: "JSON", extensions: ["json"] }],
-        });
-        if (!path) return;
-        outputPath = path as string;
-      }
+      const outputPath = `${node.label}.json`;
       await api.exportQueryResultJson(outputPath, result.columns, result.rows);
       toast(t("grid.exported"));
       return;
@@ -1343,7 +1273,7 @@ async function exportData(format: "csv" | "json" | "sql") {
       columns: result.columns,
       rows: result.rows,
     });
-    await saveFileContent(content, `${node.label}.sql`, "SQL", "sql");
+    await saveFileContent(content, `${node.label}.sql`);
     toast(t("grid.exported"));
   } catch (e: any) {
     toast(t("grid.exportFailed", { message: e?.message || String(e) }), 5000);
@@ -1374,16 +1304,7 @@ async function exportDataXlsx() {
       executePage: (sql) => api.executeQuery(connectionId, database, sql),
     });
 
-    let outputPath = `${node.label}.xlsx`;
-    if (isTauriRuntime()) {
-      const { save } = await import("@tauri-apps/plugin-dialog");
-      const path = await save({
-        defaultPath: outputPath,
-        filters: [{ name: "Excel", extensions: ["xlsx"] }],
-      });
-      if (!path) return;
-      outputPath = path as string;
-    }
+    const outputPath = `${node.label}.xlsx`;
     await api.exportQueryResultXlsx(outputPath, node.label, result.columns, result.rows);
     toast(t("grid.exported"));
   } catch (e: any) {

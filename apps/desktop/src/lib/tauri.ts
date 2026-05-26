@@ -1,5 +1,19 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+type UnlistenFn = () => void;
+
+function desktopRuntimeRemoved(): Error {
+  return new Error("DBX desktop/Tauri runtime has been removed. Use the web runtime instead.");
+}
+
+async function invoke<T>(_command: string, _payload?: unknown): Promise<T> {
+  throw desktopRuntimeRemoved();
+}
+
+async function listen<T>(
+  _event: string,
+  _handler: (event: { payload: T }) => void,
+): Promise<UnlistenFn> {
+  throw desktopRuntimeRemoved();
+}
 import type {
   ConnectionConfig,
   DatabaseInfo,
@@ -1002,8 +1016,7 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
 }
 
 export async function getAppVersion(): Promise<string> {
-  const { getVersion } = await import("@tauri-apps/api/app");
-  return getVersion();
+  throw desktopRuntimeRemoved();
 }
 
 // --- Redis ---

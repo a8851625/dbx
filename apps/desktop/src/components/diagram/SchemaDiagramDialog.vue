@@ -35,7 +35,6 @@ import {
   ZoomOut,
 } from "lucide-vue-next";
 import { useToast } from "@/composables/useToast";
-import { isTauriRuntime } from "@/lib/tauriRuntime";
 
 const { t } = useI18n();
 const { toast } = useToast();
@@ -585,26 +584,13 @@ async function exportSvg() {
     const defaultPath = diagramSvgFileName(selectedConnection.value?.name ?? "", scopeName, diagramMode.value);
     const svgContent = currentDiagramSvg();
 
-    if (isTauriRuntime()) {
-      const [{ save }, { writeTextFile }] = await Promise.all([
-        import("@tauri-apps/plugin-dialog"),
-        import("@tauri-apps/plugin-fs"),
-      ]);
-      const path = await save({
-        defaultPath,
-        filters: [{ name: "SVG", extensions: ["svg"] }],
-      });
-      if (!path) return;
-      await writeTextFile(path, svgContent);
-    } else {
-      const blob = new Blob([svgContent], { type: "image/svg+xml" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = defaultPath;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
+    const blob = new Blob([svgContent], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = defaultPath;
+    a.click();
+    URL.revokeObjectURL(url);
     toast(t("diagram.exportedSvg"));
   } catch (e: any) {
     toast(t("diagram.exportSvgFailed", { message: e?.message || String(e) }), 5000);

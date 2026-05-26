@@ -14,12 +14,12 @@ additionalProperties:
 
     - default: dbx_password
       edit: true
-      envKey: PANEL_DB_PASSWORD
-      labelZh: 访问密码
-      labelEn: Access Password
+      envKey: PANEL_PG_PASSWORD
+      labelZh: PostgreSQL 密码
+      labelEn: PostgreSQL Password
       label:
-        zh: 访问密码
-        en: Access Password
+        zh: PostgreSQL 密码
+        en: PostgreSQL Password
       required: true
       rule: paramComplexity
       type: password

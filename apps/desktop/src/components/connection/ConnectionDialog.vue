@@ -867,75 +867,19 @@ watch([() => editingId.value, () => open.value], () => {
 });
 
 async function browseSshKeyPath() {
-  if (isTauriRuntime()) {
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const selected = await open({
-      title: "Select SSH Private Key",
-      multiple: false,
-    });
-    if (selected && typeof selected === "string") {
-      form.value.ssh_key_path = selected;
-    }
-  }
+  return;
 }
 
 async function browseDbFilePath() {
-  if (isTauriRuntime()) {
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const filters =
-      form.value.db_type === "duckdb"
-        ? [{ name: "DuckDB", extensions: ["duckdb", "db"] }]
-        : form.value.db_type === "access"
-          ? [{ name: "Microsoft Access", extensions: ["accdb", "mdb"] }]
-          : [{ name: "SQLite", extensions: ["db", "sqlite", "sqlite3"] }];
-    const selected = await open({
-      title: "Select Database File",
-      multiple: false,
-      filters,
-    });
-    if (selected && typeof selected === "string") {
-      form.value.host = selected;
-    }
-  }
-}
-
-function ensureDuckDbFileExtension(path: string): string {
-  return /\.(duckdb|db)$/i.test(path) ? path : `${path}.duckdb`;
+  return;
 }
 
 async function createDuckDbFilePath() {
-  if (!isTauriRuntime()) return;
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  const selected = await save({
-    title: t("connection.createDuckDbFile"),
-    defaultPath: "database.duckdb",
-    filters: [{ name: "DuckDB", extensions: ["duckdb", "db"] }],
-  });
-  if (!selected) return;
-
-  const path = ensureDuckDbFileExtension(selected);
-  form.value.host = path;
+  return;
 }
 
 async function browseJdbcDriverPaths() {
-  if (!isTauriRuntime()) return;
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const selected = await open({
-    title: t("connection.jdbcDriverBrowse"),
-    multiple: true,
-    filters: [{ name: "JDBC Driver", extensions: ["jar"] }],
-  });
-  if (!selected) return;
-
-  const paths = Array.isArray(selected) ? selected : [selected];
-  const existing = jdbcDriverPathsInput.value
-    .split(/\r?\n/)
-    .map((path) => path.trim())
-    .filter(Boolean);
-  const merged = Array.from(
-    new Set([...existing, ...paths.filter((path): path is string => typeof path === "string")]),
-  );
-  jdbcDriverPathsInput.value = merged.join("\n");
+  return;
 }
 
 async function loadJdbcDrivers() {
@@ -978,11 +922,7 @@ function onJdbcDriverSelect(path: any) {
 }
 
 function openExternalUrl(url: string) {
-  if (isTauriRuntime()) {
-    import("@tauri-apps/plugin-shell").then(({ open }) => open(url));
-  } else {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 </script>
 

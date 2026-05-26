@@ -32,7 +32,6 @@ import { findTreeNodeById, resolveNewQueryTarget } from "@/lib/newQueryContext";
 import { buildExecutableObjectSourceStatements, objectSourceSaveExecutionMode } from "@/lib/objectSourceEditor";
 import { resolveExecutableSql, resolveExecutableSqlWithBackend } from "@/lib/sqlExecutionTarget";
 import { isTauriRuntime } from "@/lib/tauriRuntime";
-import { sqlFileTitleFromPath } from "@/lib/sqlFileOpen";
 import { parseConnectionDeepLink, type ConnectionDeepLinkDraft } from "@/lib/connectionDeepLink";
 import {
   isCloseTabShortcut,
@@ -468,61 +467,32 @@ async function openSqlFile() {
   const tab = activeTab.value;
   if (!tab) return;
   try {
-    if (isTauriRuntime()) {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const { readTextFile } = await import("@tauri-apps/plugin-fs");
-      const path = await open({ filters: [{ name: "SQL", extensions: ["sql"] }], multiple: false });
-      if (path) {
-        const content = await readTextFile(path as string);
-        queryStore.updateSql(tab.id, content);
-      }
-    } else {
-      const input = document.createElement("input");
-      input.type = "file";
-      input.accept = ".sql";
-      input.onchange = () => {
-        const file = input.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (typeof reader.result === "string") {
-            queryStore.updateSql(tab.id, reader.result);
-          }
-        };
-        reader.readAsText(file);
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".sql";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") {
+          queryStore.updateSql(tab.id, reader.result);
+        }
       };
-      input.click();
-    }
+      reader.readAsText(file);
+    };
+    input.click();
   } catch (e: any) {
     toast(t("toolbar.sqlOpenFailed", { message: e?.message || String(e) }), 5000);
   }
 }
 
 async function openSqlFilePath(path: string) {
-  if (!isTauriRuntime()) return;
-  try {
-    const content = await api.readExternalSqlFile(path);
-    const connectionId =
-      connectionStore.activeConnectionId || activeTab.value?.connectionId || connectionStore.connections[0]?.id || "";
-    const connection = connectionId ? connectionStore.getConfig(connectionId) : undefined;
-    const database = activeTab.value?.database || (connection ? resolveDefaultDatabase(connection, []) : "");
-    const tabId = queryStore.createTab(connectionId, database, sqlFileTitleFromPath(path), "query");
-    queryStore.updateSql(tabId, content);
-  } catch (e: any) {
-    toast(t("toolbar.sqlOpenFailed", { message: e?.message || String(e) }), 5000);
-  }
+  void path;
 }
 
 async function openPendingSqlFiles() {
-  if (!isTauriRuntime()) return;
-  try {
-    const paths = await api.pendingOpenSqlFiles();
-    for (const path of paths) {
-      await openSqlFilePath(path);
-    }
-  } catch {
-    /* ignore startup file-open probing errors */
-  }
+  return;
 }
 
 async function openConnectionDeepLink(url: string) {
@@ -543,15 +513,7 @@ async function openConnectionDeepLink(url: string) {
 }
 
 async function openPendingConnectionLinks() {
-  if (!isTauriRuntime()) return;
-  try {
-    const links = await api.pendingOpenConnectionLinks();
-    for (const link of links) {
-      await openConnectionDeepLink(link);
-    }
-  } catch {
-    /* ignore startup deep-link probing errors */
-  }
+  return;
 }
 
 function setConnectionDialogOpen(value: boolean) {
