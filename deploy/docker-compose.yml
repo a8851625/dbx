@@ -15,15 +15,38 @@ services:
       - ENTERPRISE_INTERNAL_TOKEN=dbx-enterprise-internal
       - DBX_WEB_BASE_URL=http://dbx:4224
       - DBX_WEB_INTERNAL_TOKEN=dbx-enterprise-internal
+      - OIDC_ENABLED=true
+      - OIDC_MOCK_MODE=false
+      - OIDC_PROVIDER_NAME=DBX Local Keycloak
+      - OIDC_CLIENT_ID=dbx-web
+      - OIDC_CLIENT_SECRET=dbx-web-secret
+      - OIDC_AUTHORIZE_URL=http://localhost:8080/realms/dbx/protocol/openid-connect/auth
+      - OIDC_TOKEN_URL=http://keycloak:8080/realms/dbx/protocol/openid-connect/token
+      - OIDC_USERINFO_URL=http://keycloak:8080/realms/dbx/protocol/openid-connect/userinfo
       - OIDC_REDIRECT_URI=http://localhost:4224/api/v1/auth/callback
       - OIDC_POST_LOGOUT_REDIRECT_URI=http://localhost:4224/login
+      - OIDC_LOGOUT_URL=http://localhost:8080/realms/dbx/protocol/openid-connect/logout
     ports:
       - "4224:4224"
     depends_on:
       postgres:
         condition: service_healthy
+      keycloak:
+        condition: service_started
     volumes:
       - dbx-data:/app/data:ro
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6.1
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KC_BOOTSTRAP_ADMIN_USERNAME=admin
+      - KC_BOOTSTRAP_ADMIN_PASSWORD=admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak/realms:/opt/keycloak/data/import:ro
     restart: unless-stopped
 
   postgres:

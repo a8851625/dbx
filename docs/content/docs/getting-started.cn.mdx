@@ -214,6 +214,23 @@ pnpm dev:backend
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
+这个 compose 栈现在也会同时拉起本地 Keycloak，用来做真实 OIDC 联调：
+
+- DBX: `http://localhost:4224`
+- Keycloak: `http://localhost:8080`
+- Realm: `dbx`
+- Client: `dbx-web`
+- Client Secret: `dbx-web-secret`
+- 测试账号: `dbx-admin / dbx-admin-123`（`admin@example.com`）
+
+可以用下面的命令做一次完整的认证 smoke：
+
+```bash
+python3 deploy/scripts/oidc_compose_smoke.py
+```
+
+shared test 所需环境变量和 QA handoff 清单见 `backend/docs/oidc-shared-test.md`。
+
 ### 构建 Web 镜像
 
 ```bash

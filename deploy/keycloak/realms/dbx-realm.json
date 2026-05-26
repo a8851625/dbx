@@ -1,0 +1,51 @@
+{
+  "realm": "dbx",
+  "enabled": true,
+  "displayName": "DBX Local Realm",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "clients": [
+    {
+      "clientId": "dbx-web",
+      "name": "DBX Web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "secret": "dbx-web-secret",
+      "publicClient": false,
+      "redirectUris": [
+        "http://localhost:4224/*",
+        "http://127.0.0.1:4224/*"
+      ],
+      "webOrigins": [
+        "http://localhost:4224",
+        "http://127.0.0.1:4224"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:4224/* http://127.0.0.1:4224/*"
+      },
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false
+    }
+  ],
+  "users": [
+    {
+      "username": "dbx-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "DBX",
+      "lastName": "Admin",
+      "email": "admin@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dbx-admin-123",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

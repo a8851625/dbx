@@ -214,6 +214,23 @@ For a full local stack with PostgreSQL:
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
+The compose stack now also starts a local Keycloak realm for end-to-end OIDC checks:
+
+- DBX: `http://localhost:4224`
+- Keycloak: `http://localhost:8080`
+- Realm: `dbx`
+- Client: `dbx-web`
+- Client secret: `dbx-web-secret`
+- Test user: `dbx-admin / dbx-admin-123` (`admin@example.com`)
+
+Smoke-check the full auth path with:
+
+```bash
+python3 deploy/scripts/oidc_compose_smoke.py
+```
+
+Shared-test variables and the QA handoff checklist live in `backend/docs/oidc-shared-test.md`.
+
 ### Build Web Image
 
 ```bash

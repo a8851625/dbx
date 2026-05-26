@@ -59,6 +59,31 @@ class AuthServiceTests(unittest.TestCase):
         self.assertEqual(query["code"], ["mock-login"])
         self.assertEqual(query["state"], [context.state])
 
+    def test_create_authorization_request_uses_real_oidc_authorize_url(self) -> None:
+        service = AuthService(
+            Settings(
+                oidc_enabled=True,
+                oidc_mock_mode=False,
+                oidc_redirect_uri="http://localhost:4224/api/v1/auth/callback",
+            )
+        )
+        db = FakeDB()
+
+        context = service.create_authorization_request(db, make_provider())
+
+        self.assertIn(context.state, db.auth_requests)
+        parsed = urlparse(context.authorization_url)
+        self.assertEqual(parsed.scheme, "https")
+        self.assertEqual(parsed.netloc, "idp.example.com")
+        self.assertEqual(parsed.path, "/authorize")
+
+        query = parse_qs(parsed.query)
+        self.assertEqual(query["client_id"], ["dbx-client"])
+        self.assertEqual(query["redirect_uri"], ["http://localhost:4224/api/v1/auth/callback"])
+        self.assertEqual(query["state"], [context.state])
+        self.assertEqual(query["nonce"], [context.nonce])
+        self.assertEqual(query["response_type"], ["code"])
+
     def test_consume_authorization_request_marks_state_consumed(self) -> None:
         service = AuthService(Settings())
         db = FakeDB()
