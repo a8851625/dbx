@@ -17,6 +17,7 @@ from app.schemas.approval import (
     ApprovalDecisionRequest,
     ApprovalFlowResponse,
     ApprovalFlowStepResponse,
+    ApprovalFlowUpsertRequest,
     ApprovalInstanceResponse,
     ApprovalInstanceStepResponse,
     ApprovalTicketCreateRequest,
@@ -52,6 +53,117 @@ def list_approval_flows(
     approval_service: ApprovalService = Depends(get_approval_service),
 ) -> list[ApprovalFlowResponse]:
     return [_serialize_flow(flow, steps) for flow, steps in approval_service.list_flows(db)]
+
+
+@router.post("/flows", response_model=ApprovalFlowResponse)
+def create_approval_flow(
+    request: Request,
+    payload: ApprovalFlowUpsertRequest,
+    current_user: UserIdentity = Depends(require_permission("approval.flow.manage")),
+    db: Session = Depends(get_db),
+    approval_service: ApprovalService = Depends(get_approval_service),
+    audit_service: AuditService = Depends(get_audit_service),
+) -> ApprovalFlowResponse:
+    flow, steps = approval_service.create_flow(
+        db,
+        code=payload.code,
+        name=payload.name,
+        description=payload.description,
+        ticket_type=payload.ticket_type,
+        match_rule=payload.match_rule,
+        enabled=payload.enabled,
+        steps=[step.model_dump() for step in payload.steps],
+    )
+    audit_service.record_event(
+        db,
+        event_type="approval.flow.created",
+        category="approval",
+        action="create",
+        actor=audit_service.build_actor(user=current_user, request=request),
+        resource_type="approval_flow",
+        resource_id=flow.id,
+        resource_name=flow.code,
+        payload={
+            "code": flow.code,
+            "ticket_type": flow.ticket_type,
+            "enabled": flow.enabled,
+            "step_count": len(steps),
+            "match_rule": flow.match_rule or {},
+        },
+        commit=True,
+    )
+    return _serialize_flow(flow, steps)
+
+
+@router.put("/flows/{flow_id}", response_model=ApprovalFlowResponse)
+def update_approval_flow(
+    flow_id: str,
+    request: Request,
+    payload: ApprovalFlowUpsertRequest,
+    current_user: UserIdentity = Depends(require_permission("approval.flow.manage")),
+    db: Session = Depends(get_db),
+    approval_service: ApprovalService = Depends(get_approval_service),
+    audit_service: AuditService = Depends(get_audit_service),
+) -> ApprovalFlowResponse:
+    flow, steps = approval_service.update_flow(
+        db,
+        flow_id,
+        code=payload.code,
+        name=payload.name,
+        description=payload.description,
+        ticket_type=payload.ticket_type,
+        match_rule=payload.match_rule,
+        enabled=payload.enabled,
+        steps=[step.model_dump() for step in payload.steps],
+    )
+    audit_service.record_event(
+        db,
+        event_type="approval.flow.updated",
+        category="approval",
+        action="update",
+        actor=audit_service.build_actor(user=current_user, request=request),
+        resource_type="approval_flow",
+        resource_id=flow.id,
+        resource_name=flow.code,
+        payload={
+            "code": flow.code,
+            "ticket_type": flow.ticket_type,
+            "enabled": flow.enabled,
+            "version": flow.version,
+            "step_count": len(steps),
+            "match_rule": flow.match_rule or {},
+        },
+        commit=True,
+    )
+    return _serialize_flow(flow, steps)
+
+
+@router.delete("/flows/{flow_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_approval_flow(
+    flow_id: str,
+    request: Request,
+    current_user: UserIdentity = Depends(require_permission("approval.flow.manage")),
+    db: Session = Depends(get_db),
+    approval_service: ApprovalService = Depends(get_approval_service),
+    audit_service: AuditService = Depends(get_audit_service),
+) -> None:
+    flow = db.get(ApprovalFlow, flow_id)
+    if flow is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval flow not found")
+    flow_code = flow.code
+    approval_service.delete_flow(db, flow_id)
+    audit_service.record_event(
+        db,
+        event_type="approval.flow.deleted",
+        category="approval",
+        action="delete",
+        actor=audit_service.build_actor(user=current_user, request=request),
+        resource_type="approval_flow",
+        resource_id=flow_id,
+        resource_name=flow_code,
+        payload={"code": flow_code},
+        commit=True,
+    )
 
 
 @router.get("/tickets", response_model=list[ChangeTicketResponse])

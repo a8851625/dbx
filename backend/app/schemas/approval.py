@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -26,6 +27,24 @@ class ApprovalFlowResponse(BaseModel):
     built_in: bool
     version: int
     steps: list[ApprovalFlowStepResponse]
+
+
+class ApprovalFlowStepUpsertRequest(BaseModel):
+    step_name: str = Field(min_length=1, max_length=120)
+    approval_mode: Literal["any_one", "all"] = "any_one"
+    approver_type: Literal["role", "user"]
+    approver_ref: str = Field(min_length=1, max_length=512)
+    rule: dict = Field(default_factory=dict)
+
+
+class ApprovalFlowUpsertRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=2000)
+    ticket_type: str = Field(min_length=1, max_length=32)
+    match_rule: dict = Field(default_factory=dict)
+    enabled: bool = True
+    steps: list[ApprovalFlowStepUpsertRequest] = Field(min_length=1)
 
 
 class ApprovalActionResponse(BaseModel):

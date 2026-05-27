@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from uuid import uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import desc, select
@@ -208,13 +209,91 @@ class ApprovalService:
         flows = db.execute(select(ApprovalFlow).order_by(ApprovalFlow.code.asc())).scalars().all()
         result: list[tuple[ApprovalFlow, list[ApprovalFlowStep]]] = []
         for flow in flows:
-            steps = db.execute(
-                select(ApprovalFlowStep)
-                .where(ApprovalFlowStep.flow_id == flow.id)
-                .order_by(ApprovalFlowStep.step_no.asc())
-            ).scalars().all()
+            steps = self._load_flow_steps(db, flow.id)
             result.append((flow, steps))
         return result
+
+    def create_flow(
+        self,
+        db: Session,
+        *,
+        code: str,
+        name: str,
+        description: str | None,
+        ticket_type: str,
+        match_rule: dict,
+        enabled: bool,
+        steps: list[dict],
+    ) -> tuple[ApprovalFlow, list[ApprovalFlowStep]]:
+        normalized_code = code.strip()
+        existing = db.execute(select(ApprovalFlow).where(ApprovalFlow.code == normalized_code)).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Approval flow code already exists")
+
+        flow = ApprovalFlow(
+            code=normalized_code,
+            name=name.strip(),
+            description=description.strip() if description else None,
+            ticket_type=ticket_type.strip(),
+            match_rule=match_rule or {},
+            enabled=enabled,
+            built_in=False,
+            version=1,
+        )
+        db.add(flow)
+        db.flush()
+        created_steps = self._replace_flow_steps(db, flow, steps)
+        db.commit()
+        db.refresh(flow)
+        return flow, created_steps
+
+    def update_flow(
+        self,
+        db: Session,
+        flow_id: str,
+        *,
+        code: str,
+        name: str,
+        description: str | None,
+        ticket_type: str,
+        match_rule: dict,
+        enabled: bool,
+        steps: list[dict],
+    ) -> tuple[ApprovalFlow, list[ApprovalFlowStep]]:
+        flow = db.get(ApprovalFlow, flow_id)
+        if flow is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval flow not found")
+        if flow.built_in:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Built-in approval flow cannot be edited")
+
+        normalized_code = code.strip()
+        existing = db.execute(
+            select(ApprovalFlow).where(ApprovalFlow.code == normalized_code, ApprovalFlow.id != flow_id)
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Approval flow code already exists")
+
+        flow.code = normalized_code
+        flow.name = name.strip()
+        flow.description = description.strip() if description else None
+        flow.ticket_type = ticket_type.strip()
+        flow.match_rule = match_rule or {}
+        flow.enabled = enabled
+        flow.version += 1
+        replaced_steps = self._replace_flow_steps(db, flow, steps)
+        db.commit()
+        db.refresh(flow)
+        return flow, replaced_steps
+
+    def delete_flow(self, db: Session, flow_id: str) -> None:
+        flow = db.get(ApprovalFlow, flow_id)
+        if flow is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval flow not found")
+        if flow.built_in:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Built-in approval flow cannot be deleted")
+
+        db.delete(flow)
+        db.commit()
 
     def list_visible_tickets(
         self,
@@ -319,7 +398,7 @@ class ApprovalService:
             table=ticket.target_table,
         )
 
-        flow = self._match_flow(db, ticket.ticket_type)
+        flow = self._match_flow(db, ticket.ticket_type, ticket)
         if flow is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No approval flow matches this ticket")
 
@@ -648,23 +727,81 @@ class ApprovalService:
             return
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the submitter can modify this draft")
 
-    def _match_flow(self, db: Session, ticket_type: str) -> ApprovalFlow | None:
+    def _match_flow(self, db: Session, ticket_type: str, ticket: ChangeTicket | None = None) -> ApprovalFlow | None:
         flows = db.execute(
             select(ApprovalFlow)
             .where(ApprovalFlow.enabled.is_(True))
-            .order_by(ApprovalFlow.built_in.desc(), ApprovalFlow.version.desc())
+            .order_by(ApprovalFlow.built_in.asc(), ApprovalFlow.version.desc(), ApprovalFlow.code.asc())
         ).scalars().all()
         for flow in flows:
-            if flow.ticket_type in {ticket_type, "sql_change"}:
-                return flow
-            ticket_types = flow.match_rule.get("ticket_types") if isinstance(flow.match_rule, dict) else None
-            if isinstance(ticket_types, list) and ticket_type in ticket_types:
+            if self._flow_matches_ticket(flow, ticket_type, ticket):
                 return flow
         return None
+
+    def _flow_matches_ticket(self, flow: ApprovalFlow, ticket_type: str, ticket: ChangeTicket | None) -> bool:
+        match_rule = flow.match_rule if isinstance(flow.match_rule, dict) else {}
+        ticket_types = match_rule.get("ticket_types")
+        if isinstance(ticket_types, list) and ticket_types:
+            if ticket_type not in {str(item).strip() for item in ticket_types if str(item).strip()}:
+                return False
+        elif flow.ticket_type not in {ticket_type, "sql_change"}:
+            return False
+
+        if ticket is None:
+            return True
+
+        if not self._matches_rule_values(match_rule.get("datasource_ids"), ticket.datasource_id):
+            return False
+        if not self._matches_rule_values(match_rule.get("databases"), ticket.target_database):
+            return False
+        if not self._matches_rule_values(match_rule.get("schemas"), ticket.target_schema):
+            return False
+        if not self._matches_rule_values(match_rule.get("tables"), ticket.target_table):
+            return False
+        if not self._matches_rule_values(match_rule.get("risk_levels"), ticket.risk_level):
+            return False
+        return True
+
+    def _matches_rule_values(self, expected: object, actual: str | None) -> bool:
+        if not isinstance(expected, list) or not expected:
+            return True
+        if actual is None:
+            return False
+        normalized = {str(item).strip() for item in expected if str(item).strip()}
+        return actual in normalized
 
     def _build_ticket_number(self) -> str:
         now = datetime.now(UTC)
         return f"TKT-{now:%Y%m%d%H%M%S}-{now.microsecond % 1000000:06d}"
+
+    def _load_flow_steps(self, db: Session, flow_id: str) -> list[ApprovalFlowStep]:
+        return db.execute(
+            select(ApprovalFlowStep)
+            .where(ApprovalFlowStep.flow_id == flow_id)
+            .order_by(ApprovalFlowStep.step_no.asc())
+        ).scalars().all()
+
+    def _replace_flow_steps(self, db: Session, flow: ApprovalFlow, steps: list[dict]) -> list[ApprovalFlowStep]:
+        for step in self._load_flow_steps(db, flow.id):
+            db.delete(step)
+        db.flush()
+
+        created_steps: list[ApprovalFlowStep] = []
+        for index, step in enumerate(steps, start=1):
+            created = ApprovalFlowStep(
+                id=str(uuid4()),
+                flow_id=flow.id,
+                step_no=index,
+                step_name=str(step["step_name"]).strip(),
+                approval_mode=str(step["approval_mode"]).strip(),
+                approver_type=str(step["approver_type"]).strip(),
+                approver_ref=str(step["approver_ref"]).strip(),
+                rule=step.get("rule") or {},
+            )
+            db.add(created)
+            created_steps.append(created)
+        db.flush()
+        return created_steps
 
     def _resolve_ticket_type(self, statements: list[ClassifiedStatement]) -> str:
         kinds = {statement.statement_type for statement in statements}

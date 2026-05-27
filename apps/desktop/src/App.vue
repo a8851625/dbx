@@ -1155,6 +1155,7 @@ onUnmounted(() => {
           :draft-title="activeTab?.title || ''"
           :can-create="hasPermission('approval.ticket.create')"
           :can-view-all="isApprovalAdmin"
+          :can-manage-flows="hasPermission('approval.flow.manage')"
         />
         <AuditCenterSheet v-if="showAuditCenter" v-model:open="showAuditCenter" />
         <Transition name="toast">

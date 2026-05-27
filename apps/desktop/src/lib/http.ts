@@ -222,17 +222,44 @@ export interface ApprovalFlowStepRecord {
   rule: Record<string, unknown>;
 }
 
+export interface ApprovalFlowMatchRule {
+  ticket_types?: string[];
+  datasource_ids?: string[];
+  databases?: string[];
+  schemas?: string[];
+  tables?: string[];
+  risk_levels?: string[];
+}
+
 export interface ApprovalFlowRecord {
   id: string;
   code: string;
   name: string;
   description?: string | null;
   ticket_type: string;
-  match_rule: Record<string, unknown>;
+  match_rule: ApprovalFlowMatchRule;
   enabled: boolean;
   built_in: boolean;
   version: number;
   steps: ApprovalFlowStepRecord[];
+}
+
+export interface ApprovalFlowStepPayload {
+  step_name: string;
+  approval_mode: "any_one" | "all";
+  approver_type: "role" | "user";
+  approver_ref: string;
+  rule?: Record<string, unknown>;
+}
+
+export interface ApprovalFlowPayload {
+  code: string;
+  name: string;
+  description?: string | null;
+  ticket_type: string;
+  match_rule: ApprovalFlowMatchRule;
+  enabled: boolean;
+  steps: ApprovalFlowStepPayload[];
 }
 
 export interface CreateApprovalTicketPayload {
@@ -394,6 +421,26 @@ export async function getEnterpriseAccessContext(): Promise<EnterpriseAccessCont
 
 export async function listApprovalFlows(): Promise<ApprovalFlowRecord[]> {
   return get("/api/v1/approval/flows");
+}
+
+export async function createApprovalFlow(payload: ApprovalFlowPayload): Promise<ApprovalFlowRecord> {
+  return post("/api/v1/approval/flows", payload);
+}
+
+export async function updateApprovalFlow(flowId: string, payload: ApprovalFlowPayload): Promise<ApprovalFlowRecord> {
+  return fetch(`/api/v1/approval/flows/${encodeURIComponent(flowId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then(async (res) => {
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  });
+}
+
+export async function deleteApprovalFlow(flowId: string): Promise<void> {
+  const res = await fetch(`/api/v1/approval/flows/${encodeURIComponent(flowId)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await res.text());
 }
 
 export async function listApprovalTickets(scope: "my" | "pending" | "all" = "my"): Promise<ApprovalTicketRecord[]> {

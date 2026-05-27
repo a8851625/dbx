@@ -122,6 +122,11 @@ BUILTIN_PERMISSIONS: dict[str, dict[str, str]] = {
         "action": "execute",
         "description": "Trigger or retry approved change ticket execution jobs.",
     },
+    "approval.flow.manage": {
+        "resource_type": "approval_flow",
+        "action": "manage",
+        "description": "Create, update, and delete configurable approval templates.",
+    },
 }
 
 BUILTIN_ROLE_PERMISSIONS: dict[str, set[str]] = {

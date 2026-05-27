@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { CircleAlert, Loader2, RefreshCw, RotateCcw, Send, ShieldCheck } from "lucide-vue-next";
+import { CircleAlert, Loader2, Pencil, Plus, RefreshCw, RotateCcw, Send, ShieldCheck, Trash2 } from "lucide-vue-next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -11,15 +11,22 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/composables/useToast";
 import { translateBackendError } from "@/i18n/backend-errors";
 import * as api from "@/lib/api";
-import type { ApprovalFlowRecord, ApprovalTicketRecord } from "@/lib/api";
+import type { ApprovalFlowPayload, ApprovalFlowRecord, ApprovalTicketRecord } from "@/lib/api";
 import type { ConnectionConfig } from "@/types/database";
 
 type TicketScope = "my" | "pending" | "all";
-type ApprovalView = "create" | TicketScope;
+type ApprovalView = "create" | "flows" | TicketScope;
+type FlowStepForm = {
+  step_name: string;
+  approval_mode: "any_one" | "all";
+  approver_type: "role" | "user";
+  approver_ref: string;
+};
 
 const props = withDefaults(
   defineProps<{
@@ -32,10 +39,12 @@ const props = withDefaults(
     draftTitle?: string;
     canCreate?: boolean;
     canViewAll?: boolean;
+    canManageFlows?: boolean;
   }>(),
   {
     canCreate: false,
     canViewAll: false,
+    canManageFlows: false,
     draftConnectionId: "",
     draftDatabase: "",
     draftSchema: "",
@@ -57,13 +66,16 @@ const flows = ref<ApprovalFlowRecord[]>([]);
 const myTickets = ref<ApprovalTicketRecord[]>([]);
 const pendingTickets = ref<ApprovalTicketRecord[]>([]);
 const allTickets = ref<ApprovalTicketRecord[]>([]);
-const activeView = ref<ApprovalView>(props.canCreate ? "create" : "my");
+const activeView = ref<ApprovalView>(props.canCreate ? "create" : props.canManageFlows ? "flows" : "my");
 const selectedTicketId = ref("");
 
 const decisionOpen = ref(false);
 const decisionMode = ref<"approve" | "reject">("approve");
 const decisionTicketId = ref("");
 const decisionComment = ref("");
+const flowDialogOpen = ref(false);
+const editingFlowId = ref<string | null>(null);
+const flowDeletingId = ref<string | null>(null);
 
 const form = reactive({
   title: "",
@@ -75,8 +87,24 @@ const form = reactive({
   scheduledAt: "",
 });
 
+const flowForm = reactive({
+  code: "",
+  name: "",
+  description: "",
+  ticketType: "sql_change",
+  enabled: true,
+  matchTicketTypes: "",
+  matchDatasourceIds: "",
+  matchDatabases: "",
+  matchSchemas: "",
+  matchTables: "",
+  matchRiskLevels: "",
+  steps: [] as FlowStepForm[],
+});
+
 const canCreate = computed(() => props.canCreate);
 const canViewAll = computed(() => props.canViewAll);
+const canManageFlows = computed(() => props.canManageFlows);
 const connections = computed(() => props.connections);
 const ticketScopes = computed<TicketScope[]>(() => (props.canViewAll ? ["my", "pending", "all"] : ["my", "pending"]));
 
@@ -91,6 +119,16 @@ const selectedTicket = computed(() => {
 const canCreateTicket = computed(
   () => !!form.title.trim() && !!form.datasourceId && !!form.targetDatabase.trim() && !!form.sqlText.trim(),
 );
+const editableFlows = computed(() => flows.value.filter((flow) => !flow.built_in));
+const canSaveFlow = computed(() => {
+  if (!flowForm.code.trim() || !flowForm.name.trim()) {
+    return false;
+  }
+  if (flowForm.steps.length === 0) {
+    return false;
+  }
+  return flowForm.steps.every((step) => step.step_name.trim() && step.approver_ref.trim());
+});
 
 const modelOpen = computed({
   get: () => props.open,
@@ -105,12 +143,18 @@ watch(
       return;
     }
     resetForm();
-    activeView.value = props.canCreate ? "create" : "my";
+    if (flowDialogOpen.value) {
+      flowDialogOpen.value = false;
+    }
+    activeView.value = props.canCreate ? "create" : props.canManageFlows ? "flows" : "my";
     void reloadAll({ resetSelection: true });
   },
 );
 
 watch(activeView, (view) => {
+  if (view === "flows") {
+    return;
+  }
   if (!isTicketScope(view)) {
     return;
   }
@@ -132,6 +176,106 @@ function resetForm() {
   form.targetTable = "";
   form.sqlText = props.draftSql || "";
   form.scheduledAt = "";
+}
+
+function createEmptyFlowStep(): FlowStepForm {
+  return {
+    step_name: "",
+    approval_mode: "any_one",
+    approver_type: "role",
+    approver_ref: "",
+  };
+}
+
+function splitRuleValues(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function joinRuleValues(value?: string[]): string {
+  return value?.join(", ") ?? "";
+}
+
+function resetFlowForm() {
+  editingFlowId.value = null;
+  flowForm.code = "";
+  flowForm.name = "";
+  flowForm.description = "";
+  flowForm.ticketType = "sql_change";
+  flowForm.enabled = true;
+  flowForm.matchTicketTypes = "ddl, dml, mixed";
+  flowForm.matchDatasourceIds = "";
+  flowForm.matchDatabases = "";
+  flowForm.matchSchemas = "";
+  flowForm.matchTables = "";
+  flowForm.matchRiskLevels = "";
+  flowForm.steps = [createEmptyFlowStep()];
+}
+
+function openCreateFlowDialog() {
+  resetFlowForm();
+  flowDialogOpen.value = true;
+}
+
+function openEditFlowDialog(flow: ApprovalFlowRecord) {
+  editingFlowId.value = flow.id;
+  flowForm.code = flow.code;
+  flowForm.name = flow.name;
+  flowForm.description = flow.description ?? "";
+  flowForm.ticketType = flow.ticket_type;
+  flowForm.enabled = flow.enabled;
+  flowForm.matchTicketTypes = joinRuleValues(flow.match_rule.ticket_types);
+  flowForm.matchDatasourceIds = joinRuleValues(flow.match_rule.datasource_ids);
+  flowForm.matchDatabases = joinRuleValues(flow.match_rule.databases);
+  flowForm.matchSchemas = joinRuleValues(flow.match_rule.schemas);
+  flowForm.matchTables = joinRuleValues(flow.match_rule.tables);
+  flowForm.matchRiskLevels = joinRuleValues(flow.match_rule.risk_levels);
+  flowForm.steps = flow.steps.map((step) => ({
+    step_name: step.step_name,
+    approval_mode: step.approval_mode === "all" ? "all" : "any_one",
+    approver_type: step.approver_type === "user" ? "user" : "role",
+    approver_ref: step.approver_ref,
+  }));
+  flowDialogOpen.value = true;
+}
+
+function addFlowStep() {
+  flowForm.steps.push(createEmptyFlowStep());
+}
+
+function removeFlowStep(index: number) {
+  if (flowForm.steps.length === 1) {
+    flowForm.steps[0] = createEmptyFlowStep();
+    return;
+  }
+  flowForm.steps.splice(index, 1);
+}
+
+function buildFlowPayload(): ApprovalFlowPayload {
+  return {
+    code: flowForm.code.trim(),
+    name: flowForm.name.trim(),
+    description: flowForm.description.trim() || null,
+    ticket_type: flowForm.ticketType.trim(),
+    enabled: flowForm.enabled,
+    match_rule: {
+      ticket_types: splitRuleValues(flowForm.matchTicketTypes),
+      datasource_ids: splitRuleValues(flowForm.matchDatasourceIds),
+      databases: splitRuleValues(flowForm.matchDatabases),
+      schemas: splitRuleValues(flowForm.matchSchemas),
+      tables: splitRuleValues(flowForm.matchTables),
+      risk_levels: splitRuleValues(flowForm.matchRiskLevels),
+    },
+    steps: flowForm.steps.map((step) => ({
+      step_name: step.step_name.trim(),
+      approval_mode: step.approval_mode,
+      approver_type: step.approver_type,
+      approver_ref: step.approver_ref.trim(),
+      rule: {},
+    })),
+  };
 }
 
 function ticketsForScope(scope: TicketScope): ApprovalTicketRecord[] {
@@ -339,6 +483,52 @@ async function retryTicket(ticketId: string) {
     actionLoading.value = false;
   }
 }
+
+async function saveFlow() {
+  if (!canSaveFlow.value) {
+    return;
+  }
+  actionLoading.value = true;
+  try {
+    const payload = buildFlowPayload();
+    if (editingFlowId.value) {
+      await api.updateApprovalFlow(editingFlowId.value, payload);
+      toast(t("approval.flowUpdated"), 2500);
+    } else {
+      await api.createApprovalFlow(payload);
+      toast(t("approval.flowCreated"), 2500);
+    }
+    flowDialogOpen.value = false;
+    await reloadAll();
+  } catch (error: any) {
+    toast(
+      t("approval.actionFailed", {
+        message: translateBackendError(t, error?.message || String(error)),
+      }),
+      5000,
+    );
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
+async function removeFlow(flowId: string) {
+  flowDeletingId.value = flowId;
+  try {
+    await api.deleteApprovalFlow(flowId);
+    toast(t("approval.flowDeleted"), 2500);
+    await reloadAll();
+  } catch (error: any) {
+    toast(
+      t("approval.actionFailed", {
+        message: translateBackendError(t, error?.message || String(error)),
+      }),
+      5000,
+    );
+  } finally {
+    flowDeletingId.value = null;
+  }
+}
 </script>
 
 <template>
@@ -359,11 +549,103 @@ async function retryTicket(ticketId: string) {
               <TabsTrigger v-if="canCreate" value="create">
                 {{ t("approval.createTab") }}
               </TabsTrigger>
+              <TabsTrigger v-if="canManageFlows" value="flows">
+                {{ t("approval.flowsTab") }}
+              </TabsTrigger>
               <TabsTrigger value="my">{{ t("approval.myTicketsTab") }}</TabsTrigger>
               <TabsTrigger value="pending">{{ t("approval.pendingTab") }}</TabsTrigger>
               <TabsTrigger v-if="canViewAll" value="all">{{ t("approval.allTab") }}</TabsTrigger>
             </TabsList>
           </div>
+
+          <TabsContent v-if="canManageFlows" value="flows" class="min-h-0">
+            <ScrollArea class="h-full">
+              <div class="space-y-4 px-6 py-5">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 class="text-sm font-semibold">{{ t("approval.flowManagementTitle") }}</h3>
+                    <p class="mt-1 text-sm text-muted-foreground">{{ t("approval.flowManagementDescription") }}</p>
+                  </div>
+                  <Button size="sm" @click="openCreateFlowDialog">
+                    <Plus class="mr-2 h-4 w-4" />
+                    {{ t("approval.createFlow") }}
+                  </Button>
+                </div>
+
+                <div class="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                  {{ t("approval.flowManagementHint") }}
+                </div>
+
+                <div v-if="loading" class="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 class="h-4 w-4 animate-spin" />
+                  {{ t("approval.loading") }}
+                </div>
+
+                <div
+                  v-else-if="editableFlows.length === 0"
+                  class="rounded-lg border border-dashed p-5 text-sm text-muted-foreground"
+                >
+                  {{ t("approval.noEditableFlows") }}
+                </div>
+
+                <div v-else class="space-y-3">
+                  <div v-for="flow in editableFlows" :key="flow.id" class="rounded-lg border p-4">
+                    <div class="flex flex-wrap items-start justify-between gap-3">
+                      <div class="space-y-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <h4 class="text-sm font-semibold">{{ flow.name }}</h4>
+                          <Badge variant="outline">{{ flow.code }}</Badge>
+                          <Badge variant="outline">{{ flow.ticket_type }}</Badge>
+                          <Badge :variant="flow.enabled ? 'default' : 'outline'">
+                            {{ flow.enabled ? t("approval.enabled") : t("approval.disabled") }}
+                          </Badge>
+                        </div>
+                        <p v-if="flow.description" class="text-sm text-muted-foreground">{{ flow.description }}</p>
+                        <div class="text-xs text-muted-foreground">
+                          {{
+                            t("approval.flowMatchRuleSummary", {
+                              ticketTypes: flow.match_rule.ticket_types?.join(", ") || t("approval.matchAny"),
+                              datasources: flow.match_rule.datasource_ids?.join(", ") || t("approval.matchAny"),
+                              databases: flow.match_rule.databases?.join(", ") || t("approval.matchAny"),
+                              riskLevels: flow.match_rule.risk_levels?.join(", ") || t("approval.matchAny"),
+                            })
+                          }}
+                        </div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <Button size="sm" variant="outline" @click="openEditFlowDialog(flow)">
+                          <Pencil class="mr-2 h-4 w-4" />
+                          {{ t("approval.editFlow") }}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          :disabled="flowDeletingId === flow.id"
+                          @click="removeFlow(flow.id)"
+                        >
+                          <Loader2 v-if="flowDeletingId === flow.id" class="mr-2 h-4 w-4 animate-spin" />
+                          <Trash2 v-else class="mr-2 h-4 w-4" />
+                          {{ t("approval.deleteFlow") }}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div class="mt-4 space-y-2">
+                      <div v-for="step in flow.steps" :key="step.id" class="rounded-md bg-muted/40 px-3 py-2 text-sm">
+                        <div class="flex items-center gap-2">
+                          <Badge variant="secondary">#{{ step.step_no }}</Badge>
+                          <span class="font-medium">{{ step.step_name }}</span>
+                        </div>
+                        <div class="mt-1 text-xs text-muted-foreground">
+                          {{ t("approval.stepRule", { approver: step.approver_ref, mode: step.approval_mode }) }}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </ScrollArea>
+          </TabsContent>
 
           <TabsContent v-if="canCreate" value="create" class="min-h-0">
             <div class="grid h-full min-h-0 gap-0 lg:grid-cols-[minmax(0,1.1fr)_360px]">
@@ -401,12 +683,20 @@ async function retryTicket(ticketId: string) {
 
                     <div class="space-y-2">
                       <Label for="approval-ticket-schema">{{ t("approval.schema") }}</Label>
-                      <Input id="approval-ticket-schema" v-model="form.targetSchema" :placeholder="t('approval.optionalField')" />
+                      <Input
+                        id="approval-ticket-schema"
+                        v-model="form.targetSchema"
+                        :placeholder="t('approval.optionalField')"
+                      />
                     </div>
 
                     <div class="space-y-2">
                       <Label for="approval-ticket-table">{{ t("approval.table") }}</Label>
-                      <Input id="approval-ticket-table" v-model="form.targetTable" :placeholder="t('approval.optionalField')" />
+                      <Input
+                        id="approval-ticket-table"
+                        v-model="form.targetTable"
+                        :placeholder="t('approval.optionalField')"
+                      />
                     </div>
 
                     <div class="space-y-2 md:col-span-2">
@@ -441,7 +731,11 @@ async function retryTicket(ticketId: string) {
                       <Loader2 v-if="actionLoading" class="mr-2 h-4 w-4 animate-spin" />
                       {{ t("approval.createDraft") }}
                     </Button>
-                    <Button variant="secondary" :disabled="actionLoading || !canCreateTicket" @click="createTicket(true)">
+                    <Button
+                      variant="secondary"
+                      :disabled="actionLoading || !canCreateTicket"
+                      @click="createTicket(true)"
+                    >
                       <Send class="mr-2 h-4 w-4" />
                       {{ t("approval.createAndSubmit") }}
                     </Button>
@@ -536,7 +830,9 @@ async function retryTicket(ticketId: string) {
                       </Badge>
                     </div>
                     <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <Badge :variant="riskVariant(ticket.risk_level)">{{ t(`approval.risk.${ticket.risk_level}`) }}</Badge>
+                      <Badge :variant="riskVariant(ticket.risk_level)">{{
+                        t(`approval.risk.${ticket.risk_level}`)
+                      }}</Badge>
                       <span>{{ ticket.datasource_id }}</span>
                       <span>{{ ticket.target_database }}</span>
                     </div>
@@ -545,10 +841,7 @@ async function retryTicket(ticketId: string) {
               </div>
 
               <div class="flex min-h-0 flex-col">
-                <div
-                  v-if="selectedTicket"
-                  class="flex flex-wrap items-center gap-2 border-b px-5 py-4"
-                >
+                <div v-if="selectedTicket" class="flex flex-wrap items-center gap-2 border-b px-5 py-4">
                   <div class="min-w-0 flex-1">
                     <div class="truncate text-base font-semibold">{{ selectedTicket.title }}</div>
                     <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -649,11 +942,7 @@ async function retryTicket(ticketId: string) {
                           <Badge :variant="riskVariant(statement.risk_level)">
                             {{ t(`approval.risk.${statement.risk_level}`) }}
                           </Badge>
-                          <Badge
-                            v-for="tag in statement.risk_tags"
-                            :key="tag"
-                            variant="outline"
-                          >
+                          <Badge v-for="tag in statement.risk_tags" :key="tag" variant="outline">
                             {{ tag }}
                           </Badge>
                         </div>
@@ -666,15 +955,13 @@ async function retryTicket(ticketId: string) {
                     <div class="space-y-3">
                       <h4 class="text-sm font-semibold">{{ t("approval.approvalFlow") }}</h4>
                       <div v-if="selectedTicket.approval_instance" class="rounded-lg border">
-                        <div
-                          v-for="step in selectedTicket.approval_instance.steps"
-                          :key="step.id"
-                          class="px-4 py-3"
-                        >
+                        <div v-for="step in selectedTicket.approval_instance.steps" :key="step.id" class="px-4 py-3">
                           <div class="flex flex-wrap items-center gap-2">
                             <Badge variant="secondary">#{{ step.step_no }}</Badge>
                             <span class="text-sm font-medium">{{ step.step_name }}</span>
-                            <Badge :variant="statusVariant(step.status)">{{ t(`approval.status.${step.status}`) }}</Badge>
+                            <Badge :variant="statusVariant(step.status)">{{
+                              t(`approval.status.${step.status}`)
+                            }}</Badge>
                           </div>
                           <div class="mt-1 text-xs text-muted-foreground">
                             {{ t("approval.stepRule", { approver: step.approver_ref, mode: step.approval_mode }) }}
@@ -693,7 +980,10 @@ async function retryTicket(ticketId: string) {
                             </div>
                           </div>
                           <Separator
-                            v-if="step !== selectedTicket.approval_instance.steps[selectedTicket.approval_instance.steps.length - 1]"
+                            v-if="
+                              step !==
+                              selectedTicket.approval_instance.steps[selectedTicket.approval_instance.steps.length - 1]
+                            "
                             class="mt-3"
                           />
                         </div>
@@ -705,7 +995,10 @@ async function retryTicket(ticketId: string) {
 
                     <div class="space-y-3">
                       <h4 class="text-sm font-semibold">{{ t("approval.executionJobs") }}</h4>
-                      <div v-if="selectedTicket.execution_jobs.length === 0" class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                      <div
+                        v-if="selectedTicket.execution_jobs.length === 0"
+                        class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground"
+                      >
                         {{ t("approval.noExecutionJobs") }}
                       </div>
                       <div
@@ -750,7 +1043,10 @@ async function retryTicket(ticketId: string) {
                   </div>
                 </ScrollArea>
 
-                <div v-else class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
+                <div
+                  v-else
+                  class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground"
+                >
                   <CircleAlert class="h-5 w-5" />
                   {{ t("approval.emptySelection") }}
                 </div>
@@ -761,6 +1057,150 @@ async function retryTicket(ticketId: string) {
       </div>
     </SheetContent>
   </Sheet>
+
+  <Dialog v-model:open="flowDialogOpen">
+    <DialogContent class="sm:max-w-[720px]">
+      <DialogHeader>
+        <DialogTitle>{{ t(editingFlowId ? "approval.editFlowTitle" : "approval.createFlowTitle") }}</DialogTitle>
+      </DialogHeader>
+      <div class="space-y-4">
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="space-y-2">
+            <Label for="approval-flow-code">{{ t("approval.flowCode") }}</Label>
+            <Input id="approval-flow-code" v-model="flowForm.code" :disabled="Boolean(editingFlowId)" />
+          </div>
+          <div class="space-y-2">
+            <Label for="approval-flow-name">{{ t("approval.flowName") }}</Label>
+            <Input id="approval-flow-name" v-model="flowForm.name" />
+          </div>
+          <div class="space-y-2 md:col-span-2">
+            <Label for="approval-flow-description">{{ t("approval.flowDescription") }}</Label>
+            <Input id="approval-flow-description" v-model="flowForm.description" />
+          </div>
+          <div class="space-y-2">
+            <Label for="approval-flow-ticket-type">{{ t("approval.ticketType") }}</Label>
+            <Input id="approval-flow-ticket-type" v-model="flowForm.ticketType" />
+          </div>
+          <div class="space-y-2">
+            <Label>{{ t("approval.flowEnabled") }}</Label>
+            <div class="flex items-center gap-3 rounded-md border px-3 py-2">
+              <Switch v-model:checked="flowForm.enabled" />
+              <span class="text-sm text-muted-foreground">
+                {{ flowForm.enabled ? t("approval.enabled") : t("approval.disabled") }}
+              </span>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <Label for="approval-flow-ticket-types">{{ t("approval.matchTicketTypes") }}</Label>
+            <Input
+              id="approval-flow-ticket-types"
+              v-model="flowForm.matchTicketTypes"
+              :placeholder="t('approval.matchCommaPlaceholder')"
+            />
+          </div>
+          <div class="space-y-2">
+            <Label for="approval-flow-risk-levels">{{ t("approval.matchRiskLevels") }}</Label>
+            <Input
+              id="approval-flow-risk-levels"
+              v-model="flowForm.matchRiskLevels"
+              :placeholder="t('approval.matchCommaPlaceholder')"
+            />
+          </div>
+          <div class="space-y-2">
+            <Label for="approval-flow-datasources">{{ t("approval.matchDatasourceIds") }}</Label>
+            <Input
+              id="approval-flow-datasources"
+              v-model="flowForm.matchDatasourceIds"
+              :placeholder="t('approval.matchCommaPlaceholder')"
+            />
+          </div>
+          <div class="space-y-2">
+            <Label for="approval-flow-databases">{{ t("approval.matchDatabases") }}</Label>
+            <Input
+              id="approval-flow-databases"
+              v-model="flowForm.matchDatabases"
+              :placeholder="t('approval.matchCommaPlaceholder')"
+            />
+          </div>
+          <div class="space-y-2">
+            <Label for="approval-flow-schemas">{{ t("approval.matchSchemas") }}</Label>
+            <Input
+              id="approval-flow-schemas"
+              v-model="flowForm.matchSchemas"
+              :placeholder="t('approval.matchCommaPlaceholder')"
+            />
+          </div>
+          <div class="space-y-2">
+            <Label for="approval-flow-tables">{{ t("approval.matchTables") }}</Label>
+            <Input
+              id="approval-flow-tables"
+              v-model="flowForm.matchTables"
+              :placeholder="t('approval.matchCommaPlaceholder')"
+            />
+          </div>
+        </div>
+
+        <div class="space-y-3">
+          <div class="flex items-center justify-between gap-3">
+            <h4 class="text-sm font-semibold">{{ t("approval.flowSteps") }}</h4>
+            <Button size="sm" variant="outline" @click="addFlowStep">
+              <Plus class="mr-2 h-4 w-4" />
+              {{ t("approval.addFlowStep") }}
+            </Button>
+          </div>
+          <div v-for="(step, index) in flowForm.steps" :key="index" class="rounded-lg border p-4">
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <div class="text-sm font-medium">{{ t("approval.flowStepNumber", { number: index + 1 }) }}</div>
+              <Button size="sm" variant="ghost" @click="removeFlowStep(index)">{{
+                t("approval.removeFlowStep")
+              }}</Button>
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              <div class="space-y-2 md:col-span-2">
+                <Label>{{ t("approval.flowStepName") }}</Label>
+                <Input v-model="step.step_name" />
+              </div>
+              <div class="space-y-2">
+                <Label>{{ t("approval.flowApproverType") }}</Label>
+                <Select v-model="step.approver_type">
+                  <SelectTrigger class="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="role">{{ t("approval.approverTypeRole") }}</SelectItem>
+                    <SelectItem value="user">{{ t("approval.approverTypeUser") }}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="space-y-2">
+                <Label>{{ t("approval.flowApprovalMode") }}</Label>
+                <Select v-model="step.approval_mode">
+                  <SelectTrigger class="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="any_one">{{ t("approval.approvalModeAnyOne") }}</SelectItem>
+                    <SelectItem value="all">{{ t("approval.approvalModeAll") }}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="space-y-2 md:col-span-2">
+                <Label>{{ t("approval.flowApproverRef") }}</Label>
+                <Input v-model="step.approver_ref" :placeholder="t('approval.flowApproverRefPlaceholder')" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <DialogFooter>
+        <Button variant="outline" @click="flowDialogOpen = false">{{ t("dangerDialog.cancel") }}</Button>
+        <Button :disabled="actionLoading || !canSaveFlow" @click="saveFlow">
+          <Loader2 v-if="actionLoading" class="mr-2 h-4 w-4 animate-spin" />
+          {{ t(editingFlowId ? "approval.saveFlow" : "approval.createFlow") }}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 
   <Dialog v-model:open="decisionOpen">
     <DialogContent class="sm:max-w-[480px]">
@@ -780,7 +1220,11 @@ async function retryTicket(ticketId: string) {
       </div>
       <DialogFooter>
         <Button variant="outline" @click="decisionOpen = false">{{ t("dangerDialog.cancel") }}</Button>
-        <Button :variant="decisionMode === 'approve' ? 'default' : 'destructive'" :disabled="actionLoading" @click="confirmDecision">
+        <Button
+          :variant="decisionMode === 'approve' ? 'default' : 'destructive'"
+          :disabled="actionLoading"
+          @click="confirmDecision"
+        >
           <Loader2 v-if="actionLoading" class="mr-2 h-4 w-4 animate-spin" />
           {{ t(decisionMode === "approve" ? "approval.confirmApprove" : "approval.confirmReject") }}
         </Button>
