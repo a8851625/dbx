@@ -30,7 +30,7 @@ def wait_for_json(
     while time.monotonic() < deadline:
         try:
             return request_json(url, method=method)
-        except (HTTPError, URLError, TimeoutError, ValueError) as exc:
+        except (ConnectionResetError, HTTPError, URLError, TimeoutError, ValueError) as exc:
             last_error = exc
             time.sleep(poll_interval_seconds)
     raise SystemExit(f"{label} was not ready before timeout: {last_error}")

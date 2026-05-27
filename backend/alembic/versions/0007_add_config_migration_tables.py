@@ -1,7 +1,7 @@
 """add config migration tables
 
-Revision ID: 0007_add_config_migration_tables
-Revises: 0006_add_runtime_state_tables
+Revision ID: 0007_config_migration
+Revises: 0006_runtime_state
 Create Date: 2026-05-26 12:00:00.000000
 """
 
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision: str = "0007_add_config_migration_tables"
-down_revision: str | None = "0006_add_runtime_state_tables"
+revision: str = "0007_config_migration"
+down_revision: str | None = "0006_runtime_state"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 

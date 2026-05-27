@@ -1,7 +1,7 @@
 """add runtime state tables
 
-Revision ID: 0006_add_runtime_state_tables
-Revises: 0005_add_audit_tables
+Revision ID: 0006_runtime_state
+Revises: 0005_audit_tables
 Create Date: 2026-05-25 00:00:00.000000
 """
 
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision: str = "0006_add_runtime_state_tables"
-down_revision: str | None = "0005_add_audit_tables"
+revision: str = "0006_runtime_state"
+down_revision: str | None = "0005_audit_tables"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 

@@ -1,6 +1,6 @@
 """add approval workflow and execution tables
 
-Revision ID: 0004_add_approval_workflow_tables
+Revision ID: 0004_approval_workflow
 Revises: 0003_add_rbac_tables
 Create Date: 2026-05-25 18:20:00.000000
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "0004_add_approval_workflow_tables"
+revision: str = "0004_approval_workflow"
 down_revision: str | None = "0003_add_rbac_tables"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None

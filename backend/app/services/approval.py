@@ -166,17 +166,25 @@ class ApprovalService:
             select(ApprovalFlow).where(ApprovalFlow.code == "builtin-sql-change-admin")
         ).scalar_one_or_none()
         if flow is None:
-            flow = ApprovalFlow(code="builtin-sql-change-admin")
+            flow = ApprovalFlow(
+                code="builtin-sql-change-admin",
+                name="Built-in SQL Change Approval",
+                description="Default approval template for DDL/DML tickets routed to admin reviewers.",
+                ticket_type="sql_change",
+                match_rule={"ticket_types": ["ddl", "dml", "mixed"]},
+                enabled=True,
+                built_in=True,
+                version=1,
+            )
             db.add(flow)
-            db.flush()
-
-        flow.name = "Built-in SQL Change Approval"
-        flow.description = "Default approval template for DDL/DML tickets routed to admin reviewers."
-        flow.ticket_type = "sql_change"
-        flow.match_rule = {"ticket_types": ["ddl", "dml", "mixed"]}
-        flow.enabled = True
-        flow.built_in = True
-        flow.version = 1
+        else:
+            flow.name = "Built-in SQL Change Approval"
+            flow.description = "Default approval template for DDL/DML tickets routed to admin reviewers."
+            flow.ticket_type = "sql_change"
+            flow.match_rule = {"ticket_types": ["ddl", "dml", "mixed"]}
+            flow.enabled = True
+            flow.built_in = True
+            flow.version = 1
 
         step = db.execute(
             select(ApprovalFlowStep).where(

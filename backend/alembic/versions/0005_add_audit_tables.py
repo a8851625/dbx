@@ -1,7 +1,7 @@
 """add structured audit tables
 
-Revision ID: 0005_add_audit_tables
-Revises: 0004_add_approval_workflow_tables
+Revision ID: 0005_audit_tables
+Revises: 0004_approval_workflow
 Create Date: 2026-05-25 19:35:00.000000
 """
 
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = "0005_add_audit_tables"
-down_revision: str | None = "0004_add_approval_workflow_tables"
+revision: str = "0005_audit_tables"
+down_revision: str | None = "0004_approval_workflow"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 
