@@ -26,6 +26,9 @@ from app.services.audit import AuditActor, AuditService
 from app.services.runtime_state import RuntimeStateService
 from app.services.system_settings import SystemSettingService
 
+LAST_IMPORT_KEY = "config_migration.last_import"
+LEGACY_AUTH_KEY = "config_migration.legacy_auth"
+
 UNSUPPORTED_WEB_DATABASES = {"sqlite", "duckdb", "access"}
 AUTO_DISCOVERY_SQLITE_FILES = (
     "dbx.db",
@@ -206,7 +209,7 @@ class LegacyImportService:
 
             self.system_setting_service.set(
                 db,
-                key="config_migration.last_import",
+                key=self._user_scoped_setting_key(LAST_IMPORT_KEY, owner_user_id),
                 value={
                     "jobId": job.id,
                     "targetUserId": owner_user_id,
@@ -216,7 +219,7 @@ class LegacyImportService:
                     "completedAt": completed_at.isoformat(),
                     "summary": summary,
                 },
-                description="Most recent legacy configuration import summary.",
+                description="Most recent legacy configuration import summary for a user.",
                 updated_by_user_id=created_by_user_id,
                 commit=False,
             )
@@ -310,8 +313,9 @@ class LegacyImportService:
         if snapshot.legacy_password_hash:
             self.system_setting_service.set(
                 db,
-                key="config_migration.legacy_auth",
+                key=self._user_scoped_setting_key(LEGACY_AUTH_KEY, owner_user_id),
                 value={
+                    "targetUserId": owner_user_id,
                     "passwordHash": snapshot.legacy_password_hash,
                     "sourceKind": snapshot.source_kind,
                     "sourceLabel": snapshot.source_label,
@@ -1021,6 +1025,9 @@ class LegacyImportService:
 
     def _stable_scoped_id(self, prefix: str, owner_user_id: str, original_id: str) -> str:
         return hashlib.sha256(f"{prefix}:{owner_user_id}:{original_id}".encode("utf-8")).hexdigest()[:32]
+
+    def _user_scoped_setting_key(self, base_key: str, user_id: str) -> str:
+        return f"{base_key}.{user_id}"
 
     def _remap_sidebar_layout(self, layout: dict[str, Any], connection_id_map: dict[str, str]) -> dict[str, Any]:
         if not connection_id_map:

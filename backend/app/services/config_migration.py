@@ -42,17 +42,17 @@ class ConfigMigrationService:
             return None
 
         source_checksum = self.legacy_import_service.source_checksum(source_path)
-        auto_status = self.system_setting_service.get(db, AUTO_IMPORT_KEY, default=None)
-        if self._status_matches(auto_status, source_checksum, "succeeded"):
+        auto_status, auto_status_key = self._get_user_scoped_setting(db, AUTO_IMPORT_KEY, user.id)
+        if self._status_matches(auto_status, source_checksum, "succeeded", user.id):
             return auto_status
 
-        latest_import = self.system_setting_service.get(db, LAST_IMPORT_KEY, default=None)
-        if self._last_import_matches(latest_import, source_checksum):
+        latest_import, _ = self._get_user_scoped_setting(db, LAST_IMPORT_KEY, user.id)
+        if self._last_import_matches(latest_import, source_checksum, user.id):
             payload = self._status_payload(
                 status="succeeded",
                 source_path=str(source_path),
                 source_checksum=source_checksum,
-                target_user_id=str(latest_import.get("targetUserId") or user.id),
+                target_user_id=user.id,
                 overwrite_existing=bool(self.settings.config_migration_auto_overwrite_existing),
                 completed_at=latest_import.get("completedAt"),
                 job_id=latest_import.get("jobId"),
@@ -62,14 +62,14 @@ class ConfigMigrationService:
             if auto_status != payload:
                 self.system_setting_service.set(
                     db,
-                    key=AUTO_IMPORT_KEY,
+                    key=auto_status_key,
                     value=payload,
                     description=AUTO_IMPORT_DESCRIPTION,
                     updated_by_user_id=user.id,
                 )
             return payload
 
-        if self._status_matches(auto_status, source_checksum, "running"):
+        if self._status_matches(auto_status, source_checksum, "running", user.id):
             return auto_status
 
         started_at = datetime.now(UTC).isoformat()
@@ -83,7 +83,7 @@ class ConfigMigrationService:
         )
         self.system_setting_service.set(
             db,
-            key=AUTO_IMPORT_KEY,
+            key=auto_status_key,
             value=running_payload,
             description=AUTO_IMPORT_DESCRIPTION,
             updated_by_user_id=user.id,
@@ -111,7 +111,7 @@ class ConfigMigrationService:
             )
             self.system_setting_service.set(
                 db,
-                key=AUTO_IMPORT_KEY,
+                key=auto_status_key,
                 value=failure_payload,
                 description=AUTO_IMPORT_DESCRIPTION,
                 updated_by_user_id=user.id,
@@ -131,22 +131,52 @@ class ConfigMigrationService:
         )
         self.system_setting_service.set(
             db,
-            key=AUTO_IMPORT_KEY,
+            key=auto_status_key,
             value=success_payload,
             description=AUTO_IMPORT_DESCRIPTION,
             updated_by_user_id=user.id,
         )
         return success_payload
 
-    def _status_matches(self, payload: Any, source_checksum: str, expected_status: str) -> bool:
+    def _status_matches(
+        self,
+        payload: Any,
+        source_checksum: str,
+        expected_status: str,
+        target_user_id: str,
+    ) -> bool:
         return (
             isinstance(payload, dict)
             and payload.get("status") == expected_status
             and payload.get("sourceChecksum") == source_checksum
+            and payload.get("targetUserId") == target_user_id
         )
 
-    def _last_import_matches(self, payload: Any, source_checksum: str) -> bool:
-        return isinstance(payload, dict) and payload.get("sourceChecksum") == source_checksum
+    def _last_import_matches(self, payload: Any, source_checksum: str, target_user_id: str) -> bool:
+        return (
+            isinstance(payload, dict)
+            and payload.get("sourceChecksum") == source_checksum
+            and payload.get("targetUserId") == target_user_id
+        )
+
+    def _get_user_scoped_setting(
+        self,
+        db: Session,
+        base_key: str,
+        user_id: str,
+    ) -> tuple[dict[str, Any] | None, str]:
+        scoped_key = self._user_scoped_key(base_key, user_id)
+        scoped_payload = self.system_setting_service.get(db, scoped_key, default=None)
+        if isinstance(scoped_payload, dict):
+            return scoped_payload, scoped_key
+
+        legacy_payload = self.system_setting_service.get(db, base_key, default=None)
+        if isinstance(legacy_payload, dict) and legacy_payload.get("targetUserId") == user_id:
+            return legacy_payload, scoped_key
+        return None, scoped_key
+
+    def _user_scoped_key(self, base_key: str, user_id: str) -> str:
+        return f"{base_key}.{user_id}"
 
     def _status_payload(
         self,

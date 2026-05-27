@@ -260,12 +260,10 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   async function loadPinnedTreeNodeIds(): Promise<Set<string>> {
-    if (!isDesktop) return loadPinnedTreeNodeIdsFromLocalStorage();
     const ids = await api.loadPinnedTreeNodeIds().catch(() => []);
     const valid = ids.filter((id) => typeof id === "string");
     if (valid.length > 0) return new Set(valid);
 
-    // Migrate legacy localStorage values for existing desktop users.
     const legacy = loadPinnedTreeNodeIdsFromLocalStorage();
     if (legacy.size > 0) {
       await api.savePinnedTreeNodeIds([...legacy]).catch(() => undefined);
@@ -277,12 +275,7 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   function persistPinnedTreeNodeIds() {
-    if (isDesktop) {
-      void api.savePinnedTreeNodeIds([...pinnedTreeNodeIds.value]).catch(() => undefined);
-      return;
-    }
-    if (typeof localStorage === "undefined") return;
-    localStorage.setItem(PINNED_TREE_NODES_STORAGE_KEY, JSON.stringify([...pinnedTreeNodeIds.value]));
+    void api.savePinnedTreeNodeIds([...pinnedTreeNodeIds.value]).catch(() => undefined);
   }
 
   function isTreeNodePinned(id: string): boolean {

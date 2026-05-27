@@ -42,6 +42,8 @@ test("removeConnection prunes pinned ids and persists the pruned set", async () 
     "dbx-pinned-tree-nodes": JSON.stringify(["conn-a", "conn-a:db:main", "conn-b:db:main"]),
   });
   const originalFetch = globalThis.fetch;
+  const pinnedSaves: unknown[] = [];
+  let pinnedIdsResponse: string[] = [];
   const savedPayloads: unknown[] = [];
 
   globalThis.fetch = (async (input, init) => {
@@ -53,6 +55,18 @@ test("removeConnection prunes pinned ids and persists the pruned set", async () 
       });
     }
     if (url === "/api/layout/sidebar") {
+      return new Response("null", { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url === "/api/app-settings/pinned-tree-node-ids" && (!init || init.method === "GET")) {
+      return new Response(JSON.stringify(pinnedIdsResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url === "/api/app-settings/pinned-tree-node-ids" && init?.method === "POST") {
+      const payload = JSON.parse(String(init.body ?? "{}"));
+      pinnedSaves.push(payload);
+      pinnedIdsResponse = Array.isArray(payload.ids) ? payload.ids : [];
       return new Response("null", { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url === "/api/connection/save") {
@@ -70,13 +84,14 @@ test("removeConnection prunes pinned ids and persists the pruned set", async () 
     assert.equal(store.isTreeNodePinned("conn-a"), true);
     assert.equal(store.isTreeNodePinned("conn-a:db:main"), true);
     assert.equal(store.isTreeNodePinned("conn-b:db:main"), true);
+    assert.equal(storage.values.has("dbx-pinned-tree-nodes"), false);
 
     await store.removeConnection("conn-a");
 
     assert.equal(store.isTreeNodePinned("conn-a"), false);
     assert.equal(store.isTreeNodePinned("conn-a:db:main"), false);
     assert.equal(store.isTreeNodePinned("conn-b:db:main"), true);
-    assert.deepEqual(JSON.parse(storage.values.get("dbx-pinned-tree-nodes") || "[]"), ["conn-b:db:main"]);
+    assert.deepEqual(pinnedSaves.at(-1), { ids: ["conn-b:db:main"] });
     assert.equal(savedPayloads.length >= 1, true);
   } finally {
     globalThis.fetch = originalFetch;

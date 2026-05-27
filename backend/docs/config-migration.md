@@ -6,7 +6,7 @@ This branch completes the PostgreSQL-side migration path for legacy DBX runtime 
 
 The backend now stores and tracks:
 
-- `system_setting`: system-wide configuration metadata such as the last migration summary and preserved legacy auth metadata.
+- `system_setting`: migration bookkeeping stored as scoped keys in PostgreSQL, including per-user import summaries and preserved legacy auth metadata.
 - `legacy_import_job`: execution records for legacy SQLite/JSON imports.
 - `editor_settings`: browser editor preferences persisted through PostgreSQL user preferences instead of browser-only `localStorage`.
 - `config_migration.auto_import`: one-shot automatic migration status for the legacy Docker/web data source.
@@ -24,9 +24,9 @@ On the first authenticated `GET /api/v1/access/me` after deployment, the FastAPI
 
 1. Scans `CONFIG_MIGRATION_AUTO_SOURCE` when explicitly configured.
 2. Falls back to `DBX_DATA_DIR` (default `/app/data`) and prefers `dbx.db` over the split JSON directory when both exist.
-3. Imports the discovered legacy runtime state into PostgreSQL for the first authenticated user.
-4. Records the result in `system_setting.key = 'config_migration.auto_import'`.
-5. Skips repeated imports when the same source checksum was already imported successfully.
+3. Imports the discovered legacy runtime state into PostgreSQL for the current authenticated user.
+4. Records the per-user result in `system_setting.key = 'config_migration.auto_import.<user-id>'`.
+5. Skips repeated imports only when the same source checksum was already imported successfully for that same user.
 
 The standard compose file mounts the legacy Docker volume into `/app/data` as read-only:
 
@@ -87,12 +87,46 @@ Also supported:
 ## Import Behavior
 
 - User-scoped runtime state is imported into PostgreSQL and tracked in `legacy_import_job`.
-- The latest successful import summary is written to `system_setting.key = 'config_migration.last_import'`.
-- Automatic imports additionally write `system_setting.key = 'config_migration.auto_import'`.
-- If a legacy `password_hash` is present, it is preserved in `system_setting.key = 'config_migration.legacy_auth'` for traceability.
+- The latest successful import summary is written to `system_setting.key = 'config_migration.last_import.<user-id>'`.
+- Automatic imports write `system_setting.key = 'config_migration.auto_import.<user-id>'`.
+- If a legacy `password_hash` is present, it is preserved in `system_setting.key = 'config_migration.legacy_auth.<user-id>'` for traceability.
+- Legacy global keys remain readable only as a compatibility fallback when their payload already belongs to the current user.
 - SQLite, DuckDB, and Access connections are skipped in web mode because the browser runtime no longer exposes those local desktop drivers.
 - Existing connections are merged by ID first, then by `db_type + name + host + port`.
 - Browser editor settings are now loaded from `/api/editor-settings` in web mode and only fall back to `localStorage` when the backend save fails.
+
+## Web Runtime Local State Boundary
+
+Persisted in PostgreSQL per user:
+
+- Connections
+- Sidebar layout
+- Pinned tree node IDs
+- AI config
+- Desktop settings
+- Editor settings
+- Saved SQL library
+- Query history
+- AI conversations
+
+Still intentionally browser-local in web runtime:
+
+- Open tabs: `dbx-open-tabs`
+- Active tab: `dbx-active-tab`
+- Panel widths: `dbx-sidebar-width`, `dbx-ai-panel-width`, `dbx-history-width`
+- Active connection selection: `dbx-active-connection`
+- Theme preference: `dbx-theme-mode`
+- Locale preference: `dbx-locale`
+
+Legacy browser storage used only as one-time migration/fallback input:
+
+- `dbx-pinned-tree-nodes`
+- `dbx-ai-config`
+- `dbx-editor-settings`
+- `dbx-query-editor-font-size`
+- `dbx-saved-sql-library`
+
+This boundary avoids cross-user leakage for account-owned runtime state while keeping clearly browser-specific UI preferences local to each browser.
 
 ## Integration Notes
 
