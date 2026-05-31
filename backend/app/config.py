@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     dbx_web_base_url: str = "http://dbx:4224"
     dbx_web_internal_token: str = "dbx-enterprise-internal"
     enterprise_internal_token: str = "dbx-enterprise-internal"
+    dbx_connection_secret_key: str = ""
     config_migration_auto_enabled: bool = True
     config_migration_auto_source: str = ""
     config_migration_auto_overwrite_existing: bool = False

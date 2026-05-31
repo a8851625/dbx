@@ -18,7 +18,16 @@ class FakeLegacyImportService:
             {
                 "id": "job-1",
                 "completed_at": None,
-                "result": {"connections": {"created": 1, "updated": 0, "skipped": 0, "unsupported": []}},
+                "result": {
+                    "connections": {
+                        "created": 1,
+                        "updated": 0,
+                        "skipped": 0,
+                        "unsupported": [],
+                        "secretsStored": 1,
+                        "secretsCleared": 0,
+                    }
+                },
             },
         )()
 

@@ -7,6 +7,7 @@ services:
     environment:
       - APP_PORT=4224
       - DATABASE_URL=postgresql+psycopg://dbx:${PANEL_PG_PASSWORD}@postgres:5432/dbx_enterprise
+      - DBX_CONNECTION_SECRET_KEY=${PANEL_CONNECTION_SECRET_KEY}
       - OIDC_ENABLED=${PANEL_OIDC_ENABLED:-false}
       - OIDC_MOCK_MODE=${PANEL_OIDC_MOCK_MODE:-false}
       - OIDC_PROVIDER_NAME=${PANEL_OIDC_PROVIDER_NAME:-Enterprise SSO}

@@ -64,6 +64,14 @@ def preview_snapshot(snapshot: LegacyImportSnapshot) -> dict[str, object]:
         "sourceKind": snapshot.source_kind,
         "sourceLabel": snapshot.source_label,
         "connections": len(snapshot.connections),
+        "connectionSecretFields": sorted(
+            {
+                key
+                for connection in snapshot.connections
+                for key in ("password", "ssh_password", "ssh_key_passphrase", "proxy_password", "connection_string")
+                if connection.get(key)
+            }
+        ),
         "historyEntries": len(snapshot.history_entries),
         "savedSqlFolders": len(snapshot.saved_sql_folders),
         "savedSqlFiles": len(snapshot.saved_sql_files),

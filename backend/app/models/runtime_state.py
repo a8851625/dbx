@@ -27,6 +27,23 @@ class ConnectionProfile(Base):
     )
 
 
+class ConnectionSecret(Base):
+    __tablename__ = "connection_secret"
+
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("connection_profile.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    encrypted_value: Mapped[str] = mapped_column(Text, nullable=False)
+    encryption_scheme: Mapped[str] = mapped_column(String(32), nullable=False, default="fernet", server_default="fernet")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class UserPreference(Base):
     __tablename__ = "user_preference"
     __table_args__ = (

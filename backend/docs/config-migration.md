@@ -8,6 +8,7 @@ The backend now stores and tracks:
 
 - `system_setting`: migration bookkeeping stored as scoped keys in PostgreSQL, including per-user import summaries and preserved legacy auth metadata.
 - `legacy_import_job`: execution records for legacy SQLite/JSON imports.
+- `connection_secret`: encrypted per-connection credentials moved out of `connection_profile.config`.
 - `editor_settings`: browser editor preferences persisted through PostgreSQL user preferences instead of browser-only `localStorage`.
 - `config_migration.auto_import`: one-shot automatic migration status for the legacy Docker/web data source.
 
@@ -94,6 +95,34 @@ Also supported:
 - SQLite, DuckDB, and Access connections are skipped in web mode because the browser runtime no longer exposes those local desktop drivers.
 - Existing connections are merged by ID first, then by `db_type + name + host + port`.
 - Browser editor settings are now loaded from `/api/editor-settings` in web mode and only fall back to `localStorage` when the backend save fails.
+
+## Connection Secret Storage
+
+Connection profiles keep non-sensitive metadata in `connection_profile.config`. These fields are stripped before JSONB persistence and written to `connection_secret` instead:
+
+- `password`
+- `ssh_password`
+- `ssh_key_passphrase`
+- `proxy_password`
+- `connection_string`
+
+Each secret row is encrypted by the FastAPI backend with `DBX_CONNECTION_SECRET_KEY` before it is stored in PostgreSQL. The key must be a Fernet key and must remain stable across restarts, upgrades, rollbacks, and shared-test/prod deployments.
+
+Generate a key for each environment:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Local Docker Compose uses `DBX_CONNECTION_SECRET_KEY` from the shell when provided and falls back to the development value in `.env.example`. Shared test and production must inject their own value through the environment/secret manager. Do not rotate this value without first re-encrypting all `connection_secret.encrypted_value` rows.
+
+`GET /api/connection/list` returns `********` for fields that have stored credentials. Editing a connection preserves that placeholder unless the user enters an empty value to clear the secret or a new value to replace it. Runtime connection tests and query execution resolve the encrypted secret server-side and never require the browser to receive cleartext credentials.
+
+Legacy import still accepts cleartext secrets from SQLite `connection_secrets`, split `secrets.json`, or manifest connection payloads, but writes them into `connection_secret` instead of `connection_profile.config`. Import summaries and audit payloads include only counts and field names, not secret values.
+
+## Rollback Notes
+
+The `0008_connection_secret_store` migration intentionally removes sensitive fields from `connection_profile.config` before the application can write encrypted rows. If a rollback is required after secrets have been stored, keep a database backup that includes `connection_secret` and the exact `DBX_CONNECTION_SECRET_KEY`; otherwise connection passwords cannot be recovered. Downgrading the migration drops `connection_secret` and does not write cleartext secrets back into JSONB.
 
 ## Web Runtime Local State Boundary
 

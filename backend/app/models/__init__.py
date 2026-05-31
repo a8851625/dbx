@@ -18,6 +18,7 @@ from app.models.rbac import Permission, ResourcePolicy, Role, RolePermission, Us
 from app.models.runtime_state import (
     AiConversationState,
     ConnectionProfile,
+    ConnectionSecret,
     QueryHistoryEntry,
     SavedSqlFileState,
     SavedSqlFolderState,
@@ -40,6 +41,7 @@ __all__ = [
     "ExecutionStatementResult",
     "IdentityProvider",
     "ConnectionProfile",
+    "ConnectionSecret",
     "OidcAuthRequest",
     "Permission",
     "QueryAudit",

@@ -99,3 +99,46 @@ test("removeConnection prunes pinned ids and persists the pruned set", async () 
   }
 });
 
+test("editing connection preserves server-side secret placeholders", async () => {
+  const storage = installMemoryStorage();
+  const originalFetch = globalThis.fetch;
+  const savedPayloads: any[] = [];
+
+  globalThis.fetch = (async (input, init) => {
+    const url = String(input);
+    if (url === "/api/connection/list") {
+      return new Response(JSON.stringify([{ ...conn("conn-a", "A"), password: "********" }]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url === "/api/connection/save") {
+      savedPayloads.push(JSON.parse(String(init?.body ?? "{}")));
+      return new Response("null", { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url === "/api/layout/sidebar") {
+      return new Response("null", { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url === "/api/app-settings/pinned-tree-node-ids") {
+      return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    setActivePinia(createPinia());
+    const store = useConnectionStore();
+    await store.initFromDisk();
+    const existing = store.getConfig("conn-a");
+    assert.ok(existing);
+    await store.updateConnection({ ...existing, name: "A renamed" });
+
+    const saved = savedPayloads.at(-1)!.configs[0];
+    assert.equal(saved.name, "A renamed");
+    assert.equal(saved.password, "********");
+    assert.equal(store.getConfig("conn-a")?.password, "********");
+  } finally {
+    globalThis.fetch = originalFetch;
+    storage.restore();
+  }
+});

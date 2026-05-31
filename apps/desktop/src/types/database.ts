@@ -77,6 +77,10 @@ export interface ConnectionConfig {
   sysdba?: boolean;
   oracle_connection_type?: "service_name" | "sid";
   connection_string?: string;
+  secret_fields?: string[];
+  _secret_fields?: string[];
+  secretRefs?: Record<string, string>;
+  secret_refs?: Record<string, string>;
   jdbc_driver_class?: string;
   jdbc_driver_paths?: string[];
   one_time?: boolean;

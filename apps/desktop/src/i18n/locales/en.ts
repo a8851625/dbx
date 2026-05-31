@@ -671,7 +671,7 @@ export default {
     passphraseTitle: "Encrypt & Export",
     passphraseImportTitle: "Decrypt & Import",
     passphraseExportHint:
-      "To include connection passwords in the export, set a passphrase for encryption. You will need the same passphrase to import.",
+      "Exports include connection metadata only. Stored server-side credentials are never exported from the web runtime.",
     passphraseImportHint: "This file is encrypted. Enter the passphrase to decrypt and import.",
     passphrase: "Passphrase",
     passphraseConfirm: "Confirm Passphrase",

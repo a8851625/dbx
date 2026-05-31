@@ -610,6 +610,7 @@ def test_connection(
             database=str(config.get("database") or "") or None,
         )
     try:
+        config = runtime_state_service.prepare_connection_config_for_runtime(db, current_user.id, config)
         query_runtime_service.register_connection(config)
         return query_runtime_service.test_connection(config)
     except Exception as exc:
@@ -635,6 +636,7 @@ def connect_db(
         database=str(config.get("database") or "") or None,
     )
     try:
+        config = runtime_state_service.prepare_connection_config_for_runtime(db, current_user.id, config)
         query_runtime_service.test_connection(config)
         query_runtime_service.register_connection(config)
     except Exception as exc:
@@ -672,8 +674,6 @@ def save_connections(
             database=str(config.get("database") or "") or None,
         )
     runtime_state_service.save_connections(db, current_user.id, configs)
-    for config in configs:
-        query_runtime_service.register_connection(dict(config))
     return {"ok": True}
 
 

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.audit import AuditEvent, QueryAudit
 from app.models.auth import UserIdentity
+from app.services.connection_secrets import SECRET_PLACEHOLDER, SENSITIVE_CONNECTION_FIELDS
 
 MAX_SQL_TEXT_LENGTH = 20_000
 MAX_SQL_SUMMARY_LENGTH = 240
@@ -90,7 +91,7 @@ class AuditService:
             resource_type=resource_type,
             resource_id=resource_id,
             resource_name=resource_name,
-            payload=payload or {},
+            payload=self._redact_sensitive_payload(payload or {}),
         )
         db.add(event)
         if commit:
@@ -148,7 +149,7 @@ class AuditService:
             affected_rows=affected_rows,
             error_code=error_code,
             error_message=error_message,
-            details=metadata or {},
+            details=self._redact_sensitive_payload(metadata or {}),
             completed_at=completed_at or datetime.now(UTC),
         )
         db.add(query)
@@ -355,6 +356,31 @@ class AuditService:
         if len(normalized) <= MAX_SQL_SUMMARY_LENGTH:
             return normalized
         return normalized[: MAX_SQL_SUMMARY_LENGTH - 3] + "..."
+
+    def _redact_sensitive_payload(self, value: Any) -> Any:
+        if isinstance(value, dict):
+            redacted: dict[str, Any] = {}
+            for key, item in value.items():
+                if self._is_sensitive_key(str(key)):
+                    redacted[str(key)] = SECRET_PLACEHOLDER
+                else:
+                    redacted[str(key)] = self._redact_sensitive_payload(item)
+            return redacted
+        if isinstance(value, list):
+            return [self._redact_sensitive_payload(item) for item in value]
+        return value
+
+    def _is_sensitive_key(self, key: str) -> bool:
+        normalized = key.lower().replace("-", "_")
+        return (
+            normalized in SENSITIVE_CONNECTION_FIELDS
+            or normalized.endswith("secret")
+            or normalized.endswith("secrets")
+            or normalized.endswith("_token")
+            or "password" in normalized
+            or "passphrase" in normalized
+            or "credential" in normalized
+        )
 
     def _source_ip(self, request: Request | None) -> str | None:
         if request is None:

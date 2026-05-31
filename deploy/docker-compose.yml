@@ -15,6 +15,7 @@ services:
       - ENTERPRISE_INTERNAL_TOKEN=dbx-enterprise-internal
       - DBX_WEB_BASE_URL=http://dbx:4224
       - DBX_WEB_INTERNAL_TOKEN=dbx-enterprise-internal
+      - DBX_CONNECTION_SECRET_KEY=${DBX_CONNECTION_SECRET_KEY:-Quo2Qv0mJVPRCKW0isgqHjioLaBGxzNbTNEO94jmJnE=}
       - OIDC_ENABLED=true
       - OIDC_MOCK_MODE=false
       - OIDC_PROVIDER_NAME=DBX Local Keycloak

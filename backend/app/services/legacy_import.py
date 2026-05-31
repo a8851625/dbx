@@ -387,6 +387,8 @@ class LegacyImportService:
         skipped = 0
         unsupported: list[str] = []
         id_map: dict[str, str] = {}
+        secrets_stored = 0
+        secrets_cleared = 0
 
         for raw_config in connections:
             config = self._canonicalize_connection(dict(raw_config))
@@ -432,13 +434,17 @@ class LegacyImportService:
             if original_id:
                 id_map[original_id] = profile.id
             profile.name = str(config.get("name") or profile.id)
-            profile.config = config
+            secret_result = self.runtime_state_service.save_connection_profile_config(db, profile, config, commit=False)
+            secrets_stored += secret_result["stored"]
+            secrets_cleared += secret_result["cleared"]
 
         return {
             "created": created,
             "updated": updated,
             "skipped": skipped,
             "unsupported": unsupported,
+            "secretsStored": secrets_stored,
+            "secretsCleared": secrets_cleared,
             "id_map": id_map,
         }
 

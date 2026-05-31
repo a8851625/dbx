@@ -658,7 +658,7 @@ export default {
   configExport: {
     passphraseTitle: "加密导出",
     passphraseImportTitle: "解密导入",
-    passphraseExportHint: "如需导出连接密码，请设置密码短语进行加密保护。导入时需要输入相同的密码短语才能解密。",
+    passphraseExportHint: "导出仅包含连接元数据。Web 运行时中服务端保存的连接凭据不会被导出。",
     passphraseImportHint: "此文件已加密，请输入密码短语来解密并导入。",
     passphrase: "密码短语",
     passphraseConfirm: "确认密码短语",

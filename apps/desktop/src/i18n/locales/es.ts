@@ -618,7 +618,7 @@ export default {
     passphraseTitle: "Cifrar y exportar",
     passphraseImportTitle: "Descifrar e importar",
     passphraseExportHint:
-      "Para incluir las contraseñas de conexión en la exportación, define una frase de paso para el cifrado. Necesitarás la misma frase para importar.",
+      "Las exportaciones solo incluyen metadatos de conexión. Las credenciales guardadas en el servidor nunca se exportan desde el runtime web.",
     passphraseImportHint: "Este archivo está cifrado. Ingresa la frase de paso para descifrarlo e importarlo.",
     passphrase: "Frase de paso",
     passphraseConfirm: "Confirmar frase de paso",

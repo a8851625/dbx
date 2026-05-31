@@ -138,11 +138,12 @@ class QueryRuntimeService:
         *,
         owner_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if owner_user_id:
-            for profile in self.runtime_state.load_connections(db, owner_user_id):
-                if str(profile.get("id")) == connection_id:
-                    return profile
-        profile = self.runtime_state.load_connection_profile(db, connection_id)
+        profile = self.runtime_state.load_connection_profile(
+            db,
+            connection_id,
+            owner_user_id=owner_user_id,
+            include_secrets=True,
+        )
         if profile is not None:
             return profile
         cached = self._ephemeral_connections.get(connection_id)

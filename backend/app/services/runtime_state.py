@@ -10,12 +10,14 @@ from sqlalchemy.orm import Session
 from app.models.runtime_state import (
     AiConversationState,
     ConnectionProfile,
+    ConnectionSecret,
     QueryHistoryEntry,
     SavedSqlFileState,
     SavedSqlFolderState,
     SidebarLayoutState,
     UserPreference,
 )
+from app.services.connection_secrets import ConnectionSecretService, SECRET_PLACEHOLDER
 
 
 class RuntimeStateService:
@@ -25,19 +27,62 @@ class RuntimeStateService:
     EDITOR_SETTINGS_KEY = "editor_settings"
     SCHEMA_CACHE_PREFIX = "schema_cache:"
 
-    def load_connections(self, db: Session, user_id: str) -> list[dict[str, Any]]:
+    def __init__(self, *, secret_service: ConnectionSecretService | None = None) -> None:
+        self.secret_service = secret_service or ConnectionSecretService()
+
+    def load_connections(self, db: Session, user_id: str, *, include_secrets: bool = False) -> list[dict[str, Any]]:
         profiles = db.execute(
             select(ConnectionProfile)
             .where(ConnectionProfile.owner_user_id == user_id)
             .order_by(ConnectionProfile.name.asc(), ConnectionProfile.created_at.asc())
         ).scalars().all()
-        return [self._connection_payload(profile) for profile in profiles]
+        secrets = self._load_connection_secrets(db, [profile.id for profile in profiles])
+        return [
+            self._connection_payload(profile, secrets.get(profile.id, {}), include_secrets=include_secrets)
+            for profile in profiles
+        ]
 
-    def load_connection_profile(self, db: Session, connection_id: str) -> dict[str, Any] | None:
-        profile = db.get(ConnectionProfile, connection_id)
+    def load_connection_profile(
+        self,
+        db: Session,
+        connection_id: str,
+        *,
+        owner_user_id: str | None = None,
+        include_secrets: bool = False,
+    ) -> dict[str, Any] | None:
+        stmt = select(ConnectionProfile).where(ConnectionProfile.id == connection_id)
+        if owner_user_id is not None:
+            stmt = stmt.where(ConnectionProfile.owner_user_id == owner_user_id)
+        profile = db.execute(stmt).scalar_one_or_none()
         if profile is None:
             return None
-        return self._connection_payload(profile)
+        secrets = self._load_connection_secrets(db, [profile.id])
+        return self._connection_payload(profile, secrets.get(profile.id, {}), include_secrets=include_secrets)
+
+    def prepare_connection_config_for_runtime(
+        self,
+        db: Session,
+        user_id: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        submitted = dict(config or {})
+        connection_id = str(submitted.get("id") or "")
+        if not connection_id:
+            return submitted
+
+        stored = self.load_connection_profile(db, connection_id, owner_user_id=user_id, include_secrets=True)
+        if stored is None:
+            return submitted
+
+        existing_secret_fields = self._connection_secret_fields(db, connection_id)
+        split = self.secret_service.split_config(submitted, existing_secret_fields=existing_secret_fields)
+        merged = dict(stored)
+        merged.update(split.safe_config)
+        for field, value in split.secret_values.items():
+            merged[field] = value
+        for field in split.clear_secret_fields:
+            merged.pop(field, None)
+        return merged
 
     def save_connections(self, db: Session, user_id: str, configs: list[dict[str, Any]]) -> None:
         incoming_ids = {str(config["id"]) for config in configs if config.get("id")}
@@ -62,9 +107,28 @@ class RuntimeStateService:
                 )
                 db.add(profile)
             profile.name = str(config.get("name") or connection_id)
-            profile.config = config
+            self.save_connection_profile_config(db, profile, config, commit=False)
 
         db.commit()
+
+    def save_connection_profile_config(
+        self,
+        db: Session,
+        profile: ConnectionProfile,
+        config: dict[str, Any],
+        *,
+        commit: bool = True,
+    ) -> dict[str, int]:
+        existing_secret_fields = self._connection_secret_fields(db, profile.id)
+        split = self.secret_service.split_config(config, existing_secret_fields=existing_secret_fields)
+        profile.config = split.safe_config
+        self._sync_connection_secrets(db, profile.id, split)
+        self._commit_or_flush(db, commit=commit)
+        return {
+            "stored": len(split.secret_values),
+            "cleared": len(split.clear_secret_fields),
+            "preserved": len(split.preserve_secret_fields),
+        }
 
     def load_sidebar_layout(self, db: Session, user_id: str) -> dict[str, Any] | None:
         state = db.get(SidebarLayoutState, user_id)
@@ -347,11 +411,66 @@ class RuntimeStateService:
     def _schema_cache_key(self, cache_key: str) -> str:
         return f"{self.SCHEMA_CACHE_PREFIX}{cache_key}"
 
-    def _connection_payload(self, profile: ConnectionProfile) -> dict[str, Any]:
+    def _connection_payload(
+        self,
+        profile: ConnectionProfile,
+        secrets: dict[str, ConnectionSecret],
+        *,
+        include_secrets: bool,
+    ) -> dict[str, Any]:
         payload = dict(profile.config or {})
         payload["id"] = profile.id
         payload["name"] = payload.get("name") or profile.name
+        payload.setdefault("password", "")
+        for field, secret in secrets.items():
+            payload[field] = self.secret_service.decrypt(secret.encrypted_value) if include_secrets else SECRET_PLACEHOLDER
         return payload
+
+    def _load_connection_secrets(
+        self,
+        db: Session,
+        connection_ids: list[str],
+    ) -> dict[str, dict[str, ConnectionSecret]]:
+        if not connection_ids:
+            return {}
+        rows = db.execute(
+            select(ConnectionSecret).where(ConnectionSecret.connection_id.in_(connection_ids))
+        ).scalars().all()
+        grouped: dict[str, dict[str, ConnectionSecret]] = {connection_id: {} for connection_id in connection_ids}
+        for row in rows:
+            grouped.setdefault(row.connection_id, {})[row.key] = row
+        return grouped
+
+    def _connection_secret_fields(self, db: Session, connection_id: str) -> set[str]:
+        rows = db.execute(
+            select(ConnectionSecret.key).where(ConnectionSecret.connection_id == connection_id)
+        ).scalars().all()
+        return {str(row) for row in rows}
+
+    def _sync_connection_secrets(self, db: Session, connection_id: str, split: Any) -> None:
+        for field, value in split.secret_values.items():
+            secret = self._get_connection_secret(db, connection_id, field)
+            if secret is None:
+                secret = ConnectionSecret(
+                    connection_id=connection_id,
+                    key=field,
+                    encrypted_value=self.secret_service.encrypt(value),
+                )
+                db.add(secret)
+            else:
+                secret.encrypted_value = self.secret_service.encrypt(value)
+        for field in split.clear_secret_fields:
+            secret = self._get_connection_secret(db, connection_id, field)
+            if secret is not None:
+                db.delete(secret)
+
+    def _get_connection_secret(self, db: Session, connection_id: str, key: str) -> ConnectionSecret | None:
+        return db.execute(
+            select(ConnectionSecret).where(
+                ConnectionSecret.connection_id == connection_id,
+                ConnectionSecret.key == key,
+            )
+        ).scalar_one_or_none()
 
     def _saved_sql_folder_payload(self, item: SavedSqlFolderState) -> dict[str, Any]:
         return {

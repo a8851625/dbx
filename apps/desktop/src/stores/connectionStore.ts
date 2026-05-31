@@ -54,6 +54,14 @@ interface PersistedTreeChildrenLoadResult {
 }
 
 type BeforeConnectHandler = (config: ConnectionConfig) => Promise<void>;
+const SECRET_PLACEHOLDER = "********";
+const SECRET_FIELDS = [
+  "password",
+  "ssh_password",
+  "ssh_key_passphrase",
+  "proxy_password",
+  "connection_string",
+] as const;
 
 function redisDbLabel(db: number, loadedKeyCount?: number, totalKeyCount?: number): string {
   if (totalKeyCount == null) return `db${db}`;
@@ -246,6 +254,26 @@ export const useConnectionStore = defineStore("connection", () => {
       proxy_type: config.proxy_type || "socks5",
       proxy_port: config.proxy_port || 1080,
     };
+  }
+
+  function stripSecretsForExport(config: ConnectionConfig): ConnectionConfig {
+    const exported: ConnectionConfig = { ...config };
+    for (const field of SECRET_FIELDS) {
+      if ((exported as any)[field] === SECRET_PLACEHOLDER) {
+        (exported as any)[field] = "";
+      }
+    }
+    return exported;
+  }
+
+  function maskSavedSecrets(config: ConnectionConfig): ConnectionConfig {
+    const masked: ConnectionConfig = { ...config };
+    for (const field of SECRET_FIELDS) {
+      if ((masked as any)[field]) {
+        (masked as any)[field] = SECRET_PLACEHOLDER;
+      }
+    }
+    return masked;
   }
 
   function loadPinnedTreeNodeIdsFromLocalStorage(): Set<string> {
@@ -472,7 +500,7 @@ export const useConnectionStore = defineStore("connection", () => {
       sidebarLayout.value = appendConnectionToLayout(sidebarLayout.value, normalized.id, newConnectionGroupId.value);
     }
     await persistConnections(nextConnections);
-    connections.value = nextConnections;
+    connections.value = nextConnections.map(maskSavedSecrets);
     rebuildTreeNodes();
     persistSidebarLayoutDebounced();
     stopCreatingConnectionInGroup();
@@ -512,7 +540,7 @@ export const useConnectionStore = defineStore("connection", () => {
     const nextConnections = [...connections.value];
     nextConnections[idx] = config;
     await persistConnections(nextConnections);
-    connections.value = nextConnections;
+    connections.value = nextConnections.map(maskSavedSecrets);
     rebuildTreeNodes();
     connectedIds.value.delete(config.id);
     invalidateCompletionCache(config.id);
@@ -1476,7 +1504,7 @@ export const useConnectionStore = defineStore("connection", () => {
 
   async function exportConnectionsToFile(passphrase: string) {
     const { encryptConfig } = await import("@/lib/configCrypto");
-    const exportData = { connections: connections.value, layout: sidebarLayout.value };
+    const exportData = { connections: connections.value.map(stripSecretsForExport), layout: sidebarLayout.value };
     const json = JSON.stringify(exportData);
     const payload = await encryptConfig(json, passphrase);
     const content = JSON.stringify(payload, null, 2);

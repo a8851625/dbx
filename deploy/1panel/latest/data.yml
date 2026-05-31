@@ -24,3 +24,14 @@ additionalProperties:
       rule: paramComplexity
       type: password
       random: true
+
+    - default: ""
+      edit: true
+      envKey: PANEL_CONNECTION_SECRET_KEY
+      labelZh: 连接凭据加密密钥
+      labelEn: Connection Secret Encryption Key
+      label:
+        zh: 连接凭据加密密钥
+        en: Connection Secret Encryption Key
+      required: true
+      type: password
