@@ -5,6 +5,7 @@ import unittest
 from app.models.auth import UserIdentity
 from app.models.rbac import ResourcePolicy
 from app.services.authorization import AccessContext, AuthorizationService
+from app.services.query_runtime import QueryPolicyViolation, QueryRuntimeService
 
 
 class AuthorizationServiceTests(unittest.TestCase):
@@ -196,6 +197,114 @@ class AuthorizationServiceTests(unittest.TestCase):
         )
 
         self.assertTrue(decision.allowed)
+
+
+class QueryPolicyServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.service = QueryRuntimeService()
+        self.user = UserIdentity(
+            id="user-1",
+            provider_id="default",
+            subject="sub-1",
+            email="user@example.com",
+            role="developer",
+        )
+        self.config = {"db_type": "postgres"}
+
+    def _context(self, conditions: dict) -> AccessContext:
+        return AccessContext(
+            user=self.user,
+            roles=("developer",),
+            permissions=frozenset({"query.execute"}),
+            policies=(
+                ResourcePolicy(
+                    id="policy-1",
+                    principal_type="role",
+                    principal_ref="developer",
+                    resource_type="datasource",
+                    resource_key="analytics",
+                    permission_code="query.execute",
+                    effect="allow",
+                    conditions=conditions,
+                    enabled=True,
+                ),
+            ),
+        )
+
+    def test_policy_plan_injects_row_filter_and_masks_visible_columns(self) -> None:
+        plan = self.service.build_query_policy_plan(
+            self._context(
+                {
+                    "tables": ["public.orders"],
+                    "row_filter": "tenant_id = 'acme'",
+                    "visible_columns": ["id", "email", "status"],
+                    "masked_columns": {"email": {"prefix": 2, "suffix": 4}},
+                }
+            ),
+            self.config,
+            datasource_id="analytics",
+            database="warehouse",
+            schema="public",
+            sql="SELECT id, email, status, total FROM public.orders ORDER BY id",
+        )
+
+        self.assertIn("WHERE (tenant_id = 'acme') ORDER BY id", plan.sql)
+        rows, columns, summary = self.service._apply_result_policy(
+            [(1, "alice@example.com", "paid", 99)],
+            ["id", "email", "status", "total"],
+            plan,
+        )
+
+        self.assertEqual(columns, ["id", "email", "status"])
+        self.assertEqual(rows, [[1, "al***.com", "paid"]])
+        self.assertEqual(summary["hidden_columns"], ["total"])
+        self.assertEqual(summary["masked_columns"], ["email"])
+
+    def test_policy_plan_rejects_complex_column_policy(self) -> None:
+        with self.assertRaises(QueryPolicyViolation):
+            self.service.build_query_policy_plan(
+                self._context({"visible_columns": ["id"]}),
+                self.config,
+                datasource_id="analytics",
+                database="warehouse",
+                schema="public",
+                sql="SELECT * FROM public.orders JOIN public.users ON users.id = orders.user_id",
+            )
+
+    def test_policy_plan_rejects_aliased_masked_projection(self) -> None:
+        with self.assertRaises(QueryPolicyViolation):
+            self.service.build_query_policy_plan(
+                self._context({"masked_columns": ["email"]}),
+                self.config,
+                datasource_id="analytics",
+                database="warehouse",
+                schema="public",
+                sql="SELECT email AS e FROM public.orders",
+            )
+
+    def test_policy_plan_rewrites_known_pagination_wrapper(self) -> None:
+        plan = self.service.build_query_policy_plan(
+            self._context({"tables": ["public.orders"], "row_filter": "tenant_id = current_setting('app.tenant')"}),
+            self.config,
+            datasource_id="analytics",
+            database="warehouse",
+            schema="public",
+            sql='SELECT * FROM (SELECT * FROM public.orders) AS dbx_page LIMIT 50 OFFSET 0',
+        )
+
+        self.assertIn("WHERE (tenant_id = current_setting('app.tenant'))", plan.sql)
+        self.assertIn("AS dbx_page LIMIT 50 OFFSET 0", plan.sql)
+
+    def test_query_policy_control_ids_identifies_policy_bypass_risk(self) -> None:
+        policy_ids = self.service.query_policy_control_ids(
+            self._context({"row_filter": "tenant_id = 'acme'"}),
+            self.config,
+            datasource_id="analytics",
+            database="warehouse",
+            schema="public",
+        )
+
+        self.assertEqual(policy_ids, ["policy-1"])
 
 
 if __name__ == "__main__":

@@ -201,6 +201,19 @@ export interface QueryResult {
   truncated?: boolean;
   session_id?: string | null;
   has_more?: boolean;
+  policy?: {
+    applied: boolean;
+    policy_ids: string[];
+    target_schema?: string | null;
+    target_table?: string | null;
+    rewritten: boolean;
+    row_filter_applied: boolean;
+    visible_columns?: string[] | null;
+    hidden_columns: string[];
+    masked_columns: string[];
+    returned_columns?: string[] | null;
+    result_controls_enabled: boolean;
+  } | null;
 }
 
 export interface SqlTextSpan {

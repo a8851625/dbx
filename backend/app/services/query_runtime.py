@@ -1,23 +1,25 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 import re
 import time
-from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl
 
+import sqlparse
+from sqlparse import tokens as sql_tokens
 from sqlalchemy import MetaData, Table, create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.sql import quoted_name
 from sqlalchemy.pool import NullPool
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.services.authorization import AccessContext
 from app.services.runtime_state import RuntimeStateService
 
 
@@ -32,6 +34,87 @@ class SqlTableReference:
     database: str | None
     schema: str | None
     table: str
+
+
+@dataclass(frozen=True)
+class ColumnMaskRule:
+    prefix: int = 0
+    suffix: int = 0
+    replacement: str = "***"
+
+
+@dataclass(frozen=True)
+class QueryPolicyTarget:
+    schema: str | None
+    table: str
+
+
+@dataclass(frozen=True)
+class QueryPolicyPlan:
+    original_sql: str
+    sql: str
+    target: QueryPolicyTarget | None
+    policy_ids: tuple[str, ...]
+    row_filter: str | None = None
+    visible_columns: frozenset[str] | None = None
+    masked_columns: dict[str, ColumnMaskRule] | None = None
+    result_controls_enabled: bool = True
+
+    @property
+    def applied(self) -> bool:
+        return bool(self.policy_ids) and (
+            self.row_filter is not None
+            or self.visible_columns is not None
+            or bool(self.masked_columns)
+        )
+
+    def summary(
+        self,
+        *,
+        hidden_columns: list[str] | None = None,
+        returned_columns: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "applied": self.applied,
+            "policy_ids": list(self.policy_ids),
+            "target_schema": self.target.schema if self.target else None,
+            "target_table": self.target.table if self.target else None,
+            "rewritten": self.sql != self.original_sql,
+            "row_filter_applied": self.row_filter is not None,
+            "visible_columns": sorted(self.visible_columns) if self.visible_columns is not None else None,
+            "hidden_columns": hidden_columns or [],
+            "masked_columns": sorted((self.masked_columns or {}).keys()),
+            "returned_columns": returned_columns,
+            "result_controls_enabled": self.result_controls_enabled,
+        }
+
+
+class QueryPolicyViolation(RuntimeError):
+    def __init__(self, message: str, *, summary: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.summary = summary or {"rejected": True, "reason": message, "policy_ids": []}
+
+    @property
+    def policy_ids(self) -> list[str]:
+        value = self.summary.get("policy_ids")
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return []
+
+
+@dataclass(frozen=True)
+class _PolicyRewriteResult:
+    sql: str
+    target: QueryPolicyTarget
+    result_controls_enabled: bool = True
+
+
+@dataclass(frozen=True)
+class _KnownWrapper:
+    prefix: str
+    inner_sql: str
+    suffix: str
+    result_controls_enabled: bool
 
 
 class QueryRuntimeService:
@@ -405,8 +488,16 @@ class QueryRuntimeService:
         schema: str | None,
         sql: str,
         max_rows: int | None = None,
+        policy_plan: QueryPolicyPlan | None = None,
     ) -> dict[str, Any]:
-        return self._execute_single(config, database=database, schema=schema, sql=sql, max_rows=max_rows)
+        return self._execute_single(
+            config,
+            database=database,
+            schema=schema,
+            sql=policy_plan.sql if policy_plan is not None else sql,
+            max_rows=max_rows,
+            policy_plan=policy_plan,
+        )
 
     def execute_multi(
         self,
@@ -416,11 +507,19 @@ class QueryRuntimeService:
         schema: str | None,
         sql: str,
         max_rows: int | None = None,
+        policy_plans: list[QueryPolicyPlan] | None = None,
     ) -> list[dict[str, Any]]:
-        statements = self.split_sql(sql)
+        statements = [plan.sql for plan in policy_plans] if policy_plans is not None else self.split_sql(sql)
         return [
-            self._execute_single(config, database=database, schema=schema, sql=statement, max_rows=max_rows)
-            for statement in statements
+            self._execute_single(
+                config,
+                database=database,
+                schema=schema,
+                sql=statement,
+                max_rows=max_rows,
+                policy_plan=policy_plans[index] if policy_plans is not None else None,
+            )
+            for index, statement in enumerate(statements)
         ]
 
     def execute_batch(
@@ -515,6 +614,171 @@ class QueryRuntimeService:
             "useAgentResultSession": False,
         }
 
+    def build_query_policy_plans(
+        self,
+        context: AccessContext,
+        config: dict[str, Any],
+        *,
+        datasource_id: str,
+        database: str,
+        schema: str | None,
+        sql: str,
+        permission_code: str = "query.execute",
+    ) -> list[QueryPolicyPlan]:
+        statements = self.split_sql(sql)
+        if not statements:
+            return []
+        database_type = self._database_type(config)
+        return [
+            self.build_query_policy_plan(
+                context,
+                config,
+                datasource_id=datasource_id,
+                database=database,
+                schema=schema,
+                sql=statement,
+                permission_code=permission_code,
+                database_type=database_type,
+            )
+            for statement in statements
+        ]
+
+    def build_query_policy_plan(
+        self,
+        context: AccessContext,
+        config: dict[str, Any],
+        *,
+        datasource_id: str,
+        database: str,
+        schema: str | None,
+        sql: str,
+        permission_code: str = "query.execute",
+        database_type: str | None = None,
+    ) -> QueryPolicyPlan:
+        database_type = database_type or self._database_type(config)
+        trimmed_sql = sql.strip().rstrip(";")
+        if database_type not in POSTGRES_FAMILY:
+            return QueryPolicyPlan(original_sql=sql, sql=sql, target=None, policy_ids=())
+
+        matching_policies = self._matching_query_policies(
+            context,
+            datasource_id=datasource_id,
+            permission_code=permission_code,
+            database=database,
+            schema=schema,
+        )
+        control_policies = [
+            policy
+            for policy in matching_policies
+            if policy.effect == "allow" and self._has_query_policy_controls(policy.conditions or {})
+        ]
+        if not self._is_plain_select(trimmed_sql):
+            if not control_policies:
+                return QueryPolicyPlan(original_sql=sql, sql=sql, target=None, policy_ids=())
+            raise QueryPolicyViolation(
+                "Row and column policies only support PostgreSQL SELECT statements",
+                summary={
+                    "rejected": True,
+                    "reason": "not_select",
+                    "policy_ids": [str(policy.id) for policy in control_policies],
+                },
+            )
+
+        try:
+            base_rewrite = self._rewrite_postgres_select(
+                trimmed_sql,
+                database_type=database_type,
+                default_schema=schema,
+                row_filter=None,
+            )
+        except QueryPolicyViolation as exc:
+            raise QueryPolicyViolation(
+                str(exc),
+                summary={
+                    "rejected": True,
+                    "reason": str(exc),
+                    "policy_ids": [str(policy.id) for policy in control_policies],
+                },
+            ) from exc
+        table_control_policies = [
+            policy
+            for policy in control_policies
+            if self._conditions_table_match(
+                policy.conditions or {},
+                database=database,
+                schema=base_rewrite.target.schema,
+                table=base_rewrite.target.table,
+            )
+        ]
+        if not table_control_policies:
+            return QueryPolicyPlan(
+                original_sql=sql,
+                sql=sql,
+                target=base_rewrite.target,
+                policy_ids=(),
+                result_controls_enabled=base_rewrite.result_controls_enabled,
+            )
+
+        row_filter = self._merge_row_filters([policy.conditions or {} for policy in table_control_policies])
+        visible_columns = self._merge_visible_columns([policy.conditions or {} for policy in table_control_policies])
+        masked_columns = self._merge_masked_columns([policy.conditions or {} for policy in table_control_policies])
+        policy_ids = tuple(str(policy.id) for policy in table_control_policies)
+
+        try:
+            rewrite = self._rewrite_postgres_select(
+                trimmed_sql,
+                database_type=database_type,
+                default_schema=schema,
+                row_filter=row_filter,
+                require_safe_projection=visible_columns is not None or bool(masked_columns),
+            )
+        except QueryPolicyViolation as exc:
+            raise QueryPolicyViolation(
+                str(exc),
+                summary={
+                    "rejected": True,
+                    "reason": str(exc),
+                    "policy_ids": list(policy_ids),
+                    "row_filter_applied": row_filter is not None,
+                    "visible_columns": sorted(visible_columns) if visible_columns is not None else None,
+                    "masked_columns": sorted(masked_columns.keys()),
+                },
+            ) from exc
+        return QueryPolicyPlan(
+            original_sql=trimmed_sql,
+            sql=rewrite.sql,
+            target=rewrite.target,
+            policy_ids=policy_ids,
+            row_filter=row_filter,
+            visible_columns=visible_columns,
+            masked_columns=masked_columns,
+            result_controls_enabled=rewrite.result_controls_enabled,
+        )
+
+    def query_policy_control_ids(
+        self,
+        context: AccessContext,
+        config: dict[str, Any],
+        *,
+        datasource_id: str,
+        database: str,
+        schema: str | None,
+        permission_code: str = "query.execute",
+    ) -> list[str]:
+        if self._database_type(config) not in POSTGRES_FAMILY:
+            return []
+        return [
+            str(policy.id)
+            for policy in self._matching_query_policies(
+                context,
+                datasource_id=datasource_id,
+                permission_code=permission_code,
+                database=database,
+                schema=schema,
+            )
+            if policy.effect == "allow" and self._has_query_policy_controls(policy.conditions or {})
+        ]
+
     def find_statement_at_cursor(self, sql: str, cursor_pos: int) -> str:
         statements = self._statements_with_offsets(sql)
         for statement, start, end in statements:
@@ -558,6 +822,7 @@ class QueryRuntimeService:
         schema: str | None,
         sql: str,
         max_rows: int | None = None,
+        policy_plan: QueryPolicyPlan | None = None,
     ) -> dict[str, Any]:
         engine = self._create_engine(config, database_override=database or None)
         start = time.perf_counter()
@@ -569,6 +834,7 @@ class QueryRuntimeService:
                 if result.returns_rows:
                     rows = result.fetchmany(max_rows or 500)
                     columns = list(result.keys())
+                    rows, columns, policy_summary = self._apply_result_policy(rows, columns, policy_plan)
                     return {
                         "columns": columns,
                         "rows": [[self._to_jsonable(value) for value in row] for row in rows],
@@ -577,6 +843,7 @@ class QueryRuntimeService:
                         "truncated": False,
                         "session_id": None,
                         "has_more": False,
+                        "policy": policy_summary,
                     }
                 return {
                     "columns": [],
@@ -586,6 +853,7 @@ class QueryRuntimeService:
                     "truncated": False,
                     "session_id": None,
                     "has_more": False,
+                    "policy": policy_plan.summary(returned_columns=[]) if policy_plan and policy_plan.applied else None,
                 }
         finally:
             engine.dispose()
@@ -661,6 +929,429 @@ class QueryRuntimeService:
         else:
             sqlite_url = f"sqlite+pysqlite:///{Path(path).expanduser()}"
         return create_engine(sqlite_url, poolclass=NullPool)
+
+    def _apply_result_policy(
+        self,
+        rows: list[Any],
+        columns: list[str],
+        policy_plan: QueryPolicyPlan | None,
+    ) -> tuple[list[list[Any]], list[str], dict[str, Any] | None]:
+        row_values = [list(row) for row in rows]
+        if policy_plan is None or not policy_plan.applied or not policy_plan.result_controls_enabled:
+            return row_values, columns, None
+
+        visible_columns = policy_plan.visible_columns
+        masked_columns = policy_plan.masked_columns or {}
+        hidden_columns: list[str] = []
+        kept_indices: list[int] = []
+        normalized_visible = {self._normalize_identifier(column) for column in visible_columns or frozenset()}
+
+        for index, column in enumerate(columns):
+            normalized = self._normalize_identifier(column)
+            if visible_columns is not None and normalized not in normalized_visible:
+                hidden_columns.append(column)
+                continue
+            kept_indices.append(index)
+
+        filtered_columns = [columns[index] for index in kept_indices]
+        normalized_masks = {self._normalize_identifier(column): rule for column, rule in masked_columns.items()}
+        filtered_rows: list[list[Any]] = []
+        for row in row_values:
+            filtered_row: list[Any] = []
+            for index in kept_indices:
+                value = row[index]
+                rule = normalized_masks.get(self._normalize_identifier(columns[index]))
+                filtered_row.append(self._mask_value(value, rule) if rule else value)
+            filtered_rows.append(filtered_row)
+
+        return filtered_rows, filtered_columns, policy_plan.summary(
+            hidden_columns=hidden_columns,
+            returned_columns=filtered_columns,
+        )
+
+    def _matching_query_policies(
+        self,
+        context: AccessContext,
+        *,
+        datasource_id: str,
+        permission_code: str,
+        database: str | None,
+        schema: str | None,
+    ) -> list[Any]:
+        matching: list[Any] = []
+        for policy in context.policies:
+            if not policy.enabled:
+                continue
+            if policy.resource_type != "datasource":
+                continue
+            if policy.resource_key not in {"*", datasource_id}:
+                continue
+            if policy.permission_code is not None and policy.permission_code != permission_code:
+                continue
+            if not self._conditions_scope_match(policy.conditions or {}, database=database, schema=schema):
+                continue
+            matching.append(policy)
+        return matching
+
+    def _conditions_scope_match(self, conditions: dict[str, Any], *, database: str | None, schema: str | None) -> bool:
+        allowed_databases = self._condition_items(conditions.get("databases"))
+        if database and allowed_databases and "*" not in allowed_databases and database not in allowed_databases:
+            return False
+
+        allowed_schemas = self._condition_items(conditions.get("schemas"))
+        if schema and allowed_schemas:
+            candidates = {schema, f"{database}.{schema}" if database else schema}
+            if "*" not in allowed_schemas and candidates.isdisjoint(allowed_schemas):
+                return False
+        return True
+
+    def _conditions_table_match(
+        self,
+        conditions: dict[str, Any],
+        *,
+        database: str | None,
+        schema: str | None,
+        table: str,
+    ) -> bool:
+        if not self._conditions_scope_match(conditions, database=database, schema=schema):
+            return False
+        allowed_tables = self._condition_items(conditions.get("tables"))
+        if allowed_tables:
+            candidates = {table}
+            if schema:
+                candidates.add(f"{schema}.{table}")
+            if database and schema:
+                candidates.add(f"{database}.{schema}.{table}")
+            if "*" not in allowed_tables and candidates.isdisjoint(allowed_tables):
+                return False
+        return True
+
+    def _has_query_policy_controls(self, conditions: dict[str, Any]) -> bool:
+        return any(
+            key in conditions
+            for key in (
+                "row_filter",
+                "row_filters",
+                "visible_columns",
+                "masked_columns",
+                "mask_columns",
+                "column_masks",
+            )
+        )
+
+    def _merge_row_filters(self, conditions_list: list[dict[str, Any]]) -> str | None:
+        filters: list[str] = []
+        for conditions in conditions_list:
+            value = conditions.get("row_filter")
+            if isinstance(value, str) and value.strip():
+                filters.append(value.strip())
+            elif isinstance(value, list):
+                filters.extend(str(item).strip() for item in value if str(item).strip())
+            extra_filters = conditions.get("row_filters")
+            if isinstance(extra_filters, list):
+                filters.extend(str(item).strip() for item in extra_filters if str(item).strip())
+        if not filters:
+            return None
+        return " AND ".join(f"({item})" for item in filters)
+
+    def _merge_visible_columns(self, conditions_list: list[dict[str, Any]]) -> frozenset[str] | None:
+        visible: set[str] | None = None
+        for conditions in conditions_list:
+            items = self._condition_items(conditions.get("visible_columns"))
+            if not items or "*" in items:
+                continue
+            normalized = {self._normalize_identifier(item) for item in items}
+            visible = normalized if visible is None else visible & normalized
+        return None if visible is None else frozenset(visible)
+
+    def _merge_masked_columns(self, conditions_list: list[dict[str, Any]]) -> dict[str, ColumnMaskRule]:
+        merged: dict[str, ColumnMaskRule] = {}
+        for conditions in conditions_list:
+            for column, rule in self._mask_rules_from_condition(conditions.get("masked_columns")).items():
+                merged[self._normalize_identifier(column)] = rule
+            for column, rule in self._mask_rules_from_condition(conditions.get("mask_columns")).items():
+                merged[self._normalize_identifier(column)] = rule
+            for column, rule in self._mask_rules_from_condition(conditions.get("column_masks")).items():
+                merged[self._normalize_identifier(column)] = rule
+        return merged
+
+    def _mask_rules_from_condition(self, value: Any) -> dict[str, ColumnMaskRule]:
+        if not value:
+            return {}
+        if isinstance(value, list):
+            return {str(item).strip(): ColumnMaskRule() for item in value if str(item).strip()}
+        if isinstance(value, dict):
+            rules: dict[str, ColumnMaskRule] = {}
+            for column, spec in value.items():
+                column_name = str(column).strip()
+                if not column_name:
+                    continue
+                if isinstance(spec, dict):
+                    rules[column_name] = ColumnMaskRule(
+                        prefix=max(self._int_or_default(spec.get("prefix"), 0), 0),
+                        suffix=max(self._int_or_default(spec.get("suffix"), 0), 0),
+                        replacement=str(spec.get("replacement") or spec.get("mask") or "***"),
+                    )
+                else:
+                    rules[column_name] = ColumnMaskRule()
+            return rules
+        return {}
+
+    def _rewrite_postgres_select(
+        self,
+        sql: str,
+        *,
+        database_type: str,
+        default_schema: str | None,
+        row_filter: str | None,
+        require_safe_projection: bool = False,
+    ) -> _PolicyRewriteResult:
+        wrapper = self._unwrap_known_policy_wrapper(sql)
+        if wrapper is not None:
+            inner = self._rewrite_postgres_select(
+                wrapper.inner_sql,
+                database_type=database_type,
+                default_schema=default_schema,
+                row_filter=row_filter,
+                require_safe_projection=require_safe_projection,
+            )
+            return _PolicyRewriteResult(
+                sql=f"{wrapper.prefix}{inner.sql}{wrapper.suffix}",
+                target=inner.target,
+                result_controls_enabled=wrapper.result_controls_enabled and inner.result_controls_enabled,
+            )
+
+        parsed = sqlparse.parse(sql)
+        if len(parsed) != 1:
+            raise QueryPolicyViolation("Only one SELECT statement can be policy-rewritten")
+        statement = parsed[0]
+        if statement.get_type() != "SELECT":
+            raise QueryPolicyViolation("Only SELECT statements can be policy-rewritten")
+        tokens = [token for token in statement.tokens if not token.is_whitespace]
+        if not tokens or tokens[0].normalized != "SELECT":
+            raise QueryPolicyViolation("Only SELECT statements can be policy-rewritten")
+
+        from_index = self._top_level_token_index(tokens, "FROM")
+        if from_index is None or from_index + 1 >= len(tokens):
+            raise QueryPolicyViolation("SELECT statement does not contain a safe FROM target")
+        if self._top_level_token_index(tokens, "JOIN") is not None:
+            raise QueryPolicyViolation("JOIN queries cannot be safely policy-rewritten yet")
+        if require_safe_projection:
+            self._validate_safe_projection(tokens, from_index)
+
+        source_token = tokens[from_index + 1]
+        table_schema, table_name = self._table_from_source_token(source_token, default_schema=default_schema)
+        table_schema = table_schema or default_schema or "public"
+        target = QueryPolicyTarget(schema=table_schema, table=table_name)
+
+        if row_filter is None:
+            return _PolicyRewriteResult(sql=sql, target=target)
+        self._validate_row_filter(row_filter)
+
+        wrapped_filter = row_filter if row_filter.startswith("(") else f"({row_filter})"
+        existing_where_index = self._top_level_token_index(tokens, "WHERE")
+        insertion_index = self._first_clause_token_index(
+            tokens,
+            start=from_index + 2,
+            keywords={"GROUP BY", "HAVING", "ORDER BY", "LIMIT", "OFFSET", "FETCH", "FOR", "UNION", "INTERSECT", "EXCEPT"},
+        )
+        if existing_where_index is not None:
+            where_token = tokens[existing_where_index]
+            where_sql = str(where_token).strip()
+            if not where_sql.upper().startswith("WHERE"):
+                raise QueryPolicyViolation("Unable to parse WHERE clause for policy rewrite")
+            rewritten_where = f"WHERE ({where_sql[5:].strip()}) AND {wrapped_filter}"
+            return _PolicyRewriteResult(sql=self._replace_token_text(sql, where_token, rewritten_where), target=target)
+
+        insert_pos = len(sql) if insertion_index is None else self._token_start(sql, tokens[insertion_index])
+        prefix = sql[:insert_pos].rstrip()
+        suffix = sql[insert_pos:].lstrip()
+        rewritten = f"{prefix} WHERE {wrapped_filter}"
+        if suffix:
+            rewritten += f" {suffix}"
+        return _PolicyRewriteResult(sql=rewritten, target=target)
+
+    def _unwrap_known_policy_wrapper(self, sql: str) -> _KnownWrapper | None:
+        stripped = sql.strip()
+        patterns = (
+            ("SELECT * FROM (", "DBX_PAGE", True),
+            ("SELECT COUNT(*) AS total_rows FROM (", ") AS dbx_count", False),
+            ("SELECT * FROM (", "DBX_SORTED", True),
+        )
+        upper = stripped.upper()
+        for prefix, marker, result_controls_enabled in patterns:
+            if not upper.startswith(prefix.upper()):
+                continue
+            close_index = self._find_matching_closing_paren(stripped, len(prefix) - 1)
+            if close_index is None:
+                return None
+            suffix = stripped[close_index:]
+            suffix_upper = suffix.upper()
+            if marker in {"DBX_PAGE", "DBX_SORTED"}:
+                if f") AS {marker}" not in suffix_upper:
+                    continue
+            elif not suffix_upper.startswith(marker.upper()):
+                continue
+            return _KnownWrapper(
+                prefix=stripped[: len(prefix)],
+                inner_sql=stripped[len(prefix) : close_index],
+                suffix=suffix,
+                result_controls_enabled=result_controls_enabled,
+            )
+        return None
+
+    def _find_matching_closing_paren(self, sql: str, open_index: int) -> int | None:
+        depth = 0
+        quote: str | None = None
+        index = open_index
+        while index < len(sql):
+            char = sql[index]
+            if quote:
+                if char == quote:
+                    if index + 1 < len(sql) and sql[index + 1] == quote:
+                        index += 2
+                        continue
+                    quote = None
+                index += 1
+                continue
+            if char in {"'", '"'}:
+                quote = char
+                index += 1
+                continue
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    return index
+            index += 1
+        return None
+
+    def _top_level_token_index(self, tokens: list[Any], normalized_keyword: str) -> int | None:
+        target = normalized_keyword.upper()
+        for index, token in enumerate(tokens):
+            raw = str(token).strip().upper()
+            if token.normalized == target or raw == target or raw.startswith(f"{target} "):
+                return index
+        return None
+
+    def _first_clause_token_index(self, tokens: list[Any], *, start: int, keywords: set[str]) -> int | None:
+        normalized_keywords = {keyword.upper() for keyword in keywords}
+        for index in range(start, len(tokens)):
+            normalized = tokens[index].normalized
+            raw = str(tokens[index]).strip().upper()
+            if normalized in normalized_keywords:
+                return index
+            if raw in normalized_keywords:
+                return index
+        return None
+
+    def _table_from_source_token(self, token: Any, *, default_schema: str | None) -> tuple[str | None, str]:
+        if token.__class__.__name__ == "IdentifierList":
+            raise QueryPolicyViolation("Multiple FROM targets cannot be safely policy-rewritten yet")
+        source_sql = str(token)
+        if "(" in source_sql or ")" in source_sql or "," in source_sql:
+            raise QueryPolicyViolation("Function and subquery FROM targets cannot be safely policy-rewritten yet")
+        get_real_name = getattr(token, "get_real_name", None)
+        get_parent_name = getattr(token, "get_parent_name", None)
+        table_name = str(get_real_name() if callable(get_real_name) else token).strip().strip('"')
+        parent = get_parent_name() if callable(get_parent_name) else None
+        schema = str(parent).strip().strip('"') if parent else default_schema
+        if not table_name or any(char.isspace() for char in table_name):
+            raise QueryPolicyViolation("Unable to resolve a safe table target for policy rewrite")
+        return schema or None, table_name
+
+    def _validate_safe_projection(self, tokens: list[Any], from_index: int) -> None:
+        projection_sql = " ".join(str(token).strip() for token in tokens[1:from_index]).strip()
+        if not projection_sql or projection_sql == "*":
+            return
+        parsed = sqlparse.parse(f"SELECT {projection_sql}")
+        if len(parsed) != 1:
+            raise QueryPolicyViolation("Column policies require a simple SELECT projection")
+        projection_tokens = [token for token in parsed[0].tokens if not token.is_whitespace]
+        if len(projection_tokens) < 2:
+            raise QueryPolicyViolation("Column policies require a simple SELECT projection")
+        projection_token = projection_tokens[1]
+        if projection_token.__class__.__name__ == "IdentifierList":
+            identifiers = list(projection_token.get_identifiers())
+        else:
+            identifiers = [projection_token]
+        for identifier in identifiers:
+            text_value = str(identifier).strip()
+            if text_value == "*" or text_value.endswith(".*"):
+                continue
+            if "(" in text_value or ")" in text_value:
+                raise QueryPolicyViolation("Column policies reject computed SELECT expressions")
+            get_alias = getattr(identifier, "get_alias", None)
+            if callable(get_alias) and get_alias():
+                raise QueryPolicyViolation("Column policies reject aliased SELECT columns")
+            get_real_name = getattr(identifier, "get_real_name", None)
+            column_name = get_real_name() if callable(get_real_name) else text_value
+            if not str(column_name or "").strip():
+                raise QueryPolicyViolation("Column policies require named SELECT columns")
+
+    def _replace_token_text(self, sql: str, token: Any, replacement: str) -> str:
+        start = self._token_start(sql, token)
+        end = start + len(str(token))
+        return f"{sql[:start]}{replacement}{sql[end:]}"
+
+    def _token_start(self, sql: str, token: Any) -> int:
+        value = str(token)
+        start = sql.find(value)
+        if start < 0:
+            raise QueryPolicyViolation("Unable to locate SQL clause for policy rewrite")
+        return start
+
+    def _validate_row_filter(self, row_filter: str) -> None:
+        parsed = sqlparse.parse(f"SELECT 1 WHERE {row_filter}")
+        if len(parsed) != 1:
+            raise QueryPolicyViolation("Row filter must be a single boolean expression")
+        forbidden = {";", "--", "/*", "*/"}
+        lowered = row_filter.lower()
+        if any(marker in lowered for marker in forbidden):
+            raise QueryPolicyViolation("Row filter contains forbidden SQL control tokens")
+        if any(keyword in lowered for keyword in (" drop ", " delete ", " update ", " insert ", " alter ", " truncate ")):
+            raise QueryPolicyViolation("Row filter contains non-read SQL keywords")
+
+    def _is_plain_select(self, sql: str) -> bool:
+        parsed = sqlparse.parse(sql)
+        if len(parsed) != 1:
+            return False
+        if parsed[0].get_type() != "SELECT":
+            return False
+        for token in parsed[0].flatten():
+            if token.is_whitespace:
+                continue
+            if token.ttype in sql_tokens.Comment:
+                continue
+            return token.normalized == "SELECT"
+        return False
+
+    def _condition_items(self, value: Any) -> set[str]:
+        if isinstance(value, list):
+            return {str(item).strip() for item in value if str(item).strip()}
+        return set()
+
+    def _normalize_identifier(self, value: str) -> str:
+        return value.strip().strip('"').lower()
+
+    def _mask_value(self, value: Any, rule: ColumnMaskRule | None) -> Any:
+        if value is None or rule is None:
+            return value
+        text_value = str(value)
+        if not text_value:
+            return text_value
+        prefix = min(rule.prefix, len(text_value))
+        suffix = min(rule.suffix, max(len(text_value) - prefix, 0))
+        if prefix + suffix >= len(text_value):
+            return rule.replacement
+        return f"{text_value[:prefix]}{rule.replacement}{text_value[len(text_value) - suffix:] if suffix else ''}"
+
+    def _int_or_default(self, value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
 
     def _apply_schema(self, conn: Any, config: dict[str, Any], schema: str | None) -> None:
         database_type = self._database_type(config)

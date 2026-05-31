@@ -349,6 +349,9 @@ export interface QueryPaginationExecutionPlanOptions {
   schema?: string;
   sql: string;
   queryBaseSql: string;
+  connectionId?: string;
+  database?: string;
+  schema?: string;
   databaseType?: DatabaseType;
   pagination: QueryPagination;
   useAgentCursor: boolean;

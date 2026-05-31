@@ -1274,6 +1274,17 @@ const canJumpLastPage = computed(() => canGoNextPage.value && (!!props.tableMeta
 const showTruncationWarning = computed(
   () => props.result.truncated === true && typeof props.pageLimit !== "number" && props.result.has_more !== true,
 );
+const queryPolicySummary = computed(() => props.result.policy);
+const showPolicySummary = computed(() => queryPolicySummary.value?.applied === true);
+const policySummaryText = computed(() => {
+  const policy = queryPolicySummary.value;
+  if (!policy?.applied) return "";
+  const parts: string[] = [];
+  if (policy.row_filter_applied) parts.push(t("grid.policyRowFilterApplied"));
+  if (policy.hidden_columns.length) parts.push(t("grid.policyHiddenColumns", { count: policy.hidden_columns.length }));
+  if (policy.masked_columns.length) parts.push(t("grid.policyMaskedColumns", { count: policy.masked_columns.length }));
+  return parts.join(" · ") || t("grid.policyApplied");
+});
 const isResultsContext = computed(() => props.context === "results");
 const resultEditStatus = computed(() => {
   if (!isResultsContext.value || !hasData.value) return null;
@@ -3359,6 +3370,25 @@ defineExpose({
               <slot name="search-bar" />
 
               <div class="flex shrink-0 items-center gap-1 px-1 ml-auto">
+                <Tooltip v-if="showPolicySummary">
+                  <TooltipTrigger as-child>
+                    <div
+                      class="flex h-5 items-center gap-1 rounded border border-blue-500/30 bg-blue-500/10 px-1.5 text-xs font-medium text-blue-700 dark:text-blue-300"
+                    >
+                      <LockKeyhole class="h-3 w-3" />
+                      {{ t("grid.policyApplied") }}
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" class="max-w-sm space-y-1 text-xs">
+                    <div>{{ policySummaryText }}</div>
+                    <div v-if="queryPolicySummary?.hidden_columns.length" class="font-mono">
+                      {{ t("grid.policyHiddenColumnList", { columns: queryPolicySummary.hidden_columns.join(", ") }) }}
+                    </div>
+                    <div v-if="queryPolicySummary?.masked_columns.length" class="font-mono">
+                      {{ t("grid.policyMaskedColumnList", { columns: queryPolicySummary.masked_columns.join(", ") }) }}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
                 <Tooltip v-if="resultEditStatus === 'editable'">
                   <TooltipTrigger as-child>
                     <div

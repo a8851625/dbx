@@ -9,8 +9,9 @@ from app.api.deps import get_authorization_service, get_current_user, require_pe
 from app.config import get_settings
 from app.db.session import get_db
 from app.models.auth import UserIdentity
+from app.services.audit import AuditService
 from app.services.authorization import AuthorizationService
-from app.services.query_runtime import QueryRuntimeService
+from app.services.query_runtime import QueryPolicyPlan, QueryPolicyViolation, QueryRuntimeService
 from app.services.runtime_state import RuntimeStateService
 from app.services.sql_classification import (
     ClassifiedStatement,
@@ -22,6 +23,7 @@ from app.services.sql_classification import (
 router = APIRouter()
 runtime_state_service = RuntimeStateService()
 query_runtime_service = QueryRuntimeService()
+audit_service = AuditService()
 
 
 def _internal_token_guard(x_dbx_internal_token: str | None = Header(default=None)) -> None:
@@ -264,6 +266,11 @@ def _filter_authorized_tables(
 
 def _runtime_error_to_http(exc: Exception) -> HTTPException:
     message = str(exc) or exc.__class__.__name__
+    if isinstance(exc, QueryPolicyViolation):
+        return HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"message": message, "policy_ids": exc.policy_ids, "policy": exc.summary},
+        )
     if "not supported" in message.lower():
         return HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=message)
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
@@ -344,6 +351,165 @@ def _payload_sql(payload: dict[str, Any]) -> tuple[str, list[str] | None]:
     if "statements" in payload:
         return "", list(payload.get("statements") or [])
     return str(payload.get("sql") or ""), None
+
+
+def _build_query_policy_plans(
+    *,
+    db: Session,
+    current_user: UserIdentity,
+    authorization_service: AuthorizationService,
+    config: dict[str, Any],
+    connection_id: str,
+    database: str,
+    schema: str | None,
+    sql: str,
+) -> list[QueryPolicyPlan]:
+    context = authorization_service.build_access_context(db, current_user)
+    return query_runtime_service.build_query_policy_plans(
+        context,
+        config,
+        datasource_id=connection_id,
+        database=database,
+        schema=schema,
+        sql=sql,
+    )
+
+
+def _record_policy_event(
+    db: Session,
+    *,
+    current_user: UserIdentity,
+    connection_id: str,
+    database: str,
+    schema: str | None,
+    action: str,
+    outcome: str,
+    summaries: list[dict[str, Any]],
+    error: str | None = None,
+) -> None:
+    if not summaries:
+        return
+    payload: dict[str, Any] = {
+        "datasource_id": connection_id,
+        "database": database,
+        "schema": schema,
+        "policy_summaries": summaries,
+    }
+    if error:
+        payload["error"] = error
+    audit_service.record_event(
+        db,
+        event_type=f"query.policy.{action}",
+        category="query",
+        action=action,
+        outcome=outcome,
+        actor=audit_service.build_actor(user=current_user),
+        resource_type="datasource",
+        resource_id=connection_id,
+        resource_name=connection_id,
+        payload=payload,
+        commit=False,
+    )
+
+
+def _record_query_audit(
+    db: Session,
+    *,
+    current_user: UserIdentity,
+    connection_id: str,
+    database: str,
+    schema: str | None,
+    sql: str,
+    statement_count: int,
+    status_value: str,
+    duration_ms: int | None = None,
+    affected_rows: int | None = None,
+    error_message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    audit_service.record_query(
+        db,
+        datasource_id=connection_id,
+        database_name=database,
+        schema_name=schema,
+        sql_text=sql,
+        actor=audit_service.build_actor(user=current_user),
+        statement_count=statement_count,
+        status=status_value,
+        duration_ms=duration_ms,
+        affected_rows=affected_rows,
+        error_message=error_message,
+        metadata=metadata or {},
+        commit=False,
+    )
+
+
+def _commit_audit(db: Session) -> None:
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def _audit_metadata(values: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in values.items() if value not in (None, [], {})}
+
+
+def _reject_policy_controlled_batch(
+    *,
+    db: Session,
+    current_user: UserIdentity,
+    authorization_service: AuthorizationService,
+    config: dict[str, Any],
+    connection_id: str,
+    database: str,
+    schema: str | None,
+    sql: str,
+    action: str,
+) -> None:
+    policy_ids = query_runtime_service.query_policy_control_ids(
+        authorization_service.build_access_context(db, current_user),
+        config,
+        datasource_id=connection_id,
+        database=database,
+        schema=schema,
+    )
+    if not policy_ids:
+        return
+    summary = {
+        "rejected": True,
+        "reason": "batch_policy_bypass",
+        "policy_ids": policy_ids,
+        "action": action,
+    }
+    _record_policy_event(
+        db,
+        current_user=current_user,
+        connection_id=connection_id,
+        database=database,
+        schema=schema,
+        action="rejected",
+        outcome="denied",
+        summaries=[summary],
+        error="Batch execution is not allowed while row or column policies apply",
+    )
+    _record_query_audit(
+        db,
+        current_user=current_user,
+        connection_id=connection_id,
+        database=database,
+        schema=schema,
+        sql=sql,
+        statement_count=max(len(query_runtime_service.split_sql(sql)), 1),
+        status_value="blocked",
+        error_message="Batch execution is not allowed while row or column policies apply",
+        metadata={"policy": summary},
+    )
+    _commit_audit(db)
+    raise QueryPolicyViolation(
+        "Batch execution is not allowed while row or column policies apply",
+        summary=summary,
+    )
 
 
 @router.get("/version")
@@ -970,14 +1136,87 @@ def execute_query(
     config = _connection_or_400(db, connection_id, current_user.id)
     _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
     try:
-        return query_runtime_service.execute_query(
+        policy_plan = query_runtime_service.build_query_policy_plan(
+            authorization_service.build_access_context(db, current_user),
+            config,
+            datasource_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=sql,
+        )
+        if policy_plan.applied:
+            _record_policy_event(
+                db,
+                current_user=current_user,
+                connection_id=connection_id,
+                database=database,
+                schema=schema,
+                action="applied",
+                outcome="success",
+                summaries=[policy_plan.summary()],
+            )
+        result = query_runtime_service.execute_query(
             config,
             database=database,
             schema=schema,
             sql=sql,
             max_rows=payload.get("maxRows"),
+            policy_plan=policy_plan,
         )
+        _record_query_audit(
+            db,
+            current_user=current_user,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=policy_plan.sql,
+            statement_count=1,
+            status_value="succeeded",
+            duration_ms=result.get("execution_time_ms"),
+            affected_rows=result.get("affected_rows"),
+            metadata=_audit_metadata({"policy": result.get("policy")}),
+        )
+        _commit_audit(db)
+        return result
+    except QueryPolicyViolation as exc:
+        _record_policy_event(
+            db,
+            current_user=current_user,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            action="rejected",
+            outcome="denied",
+            summaries=[exc.summary],
+            error=str(exc),
+        )
+        _record_query_audit(
+            db,
+            current_user=current_user,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=sql,
+            statement_count=1,
+            status_value="blocked",
+            error_message=str(exc),
+            metadata={"policy": exc.summary},
+        )
+        _commit_audit(db)
+        raise _runtime_error_to_http(exc) from exc
     except Exception as exc:
+        _record_query_audit(
+            db,
+            current_user=current_user,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=sql,
+            statement_count=1,
+            status_value="failed",
+            error_message=str(exc),
+        )
+        _commit_audit(db)
         raise _runtime_error_to_http(exc) from exc
 
 
@@ -996,14 +1235,90 @@ def execute_multi(
     config = _connection_or_400(db, connection_id, current_user.id)
     _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
     try:
-        return query_runtime_service.execute_multi(
+        policy_plans = _build_query_policy_plans(
+            db=db,
+            current_user=current_user,
+            authorization_service=authorization_service,
+            config=config,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=sql,
+        )
+        applied_summaries = [plan.summary() for plan in policy_plans if plan.applied]
+        if applied_summaries:
+            _record_policy_event(
+                db,
+                current_user=current_user,
+                connection_id=connection_id,
+                database=database,
+                schema=schema,
+                action="applied",
+                outcome="success",
+                summaries=applied_summaries,
+            )
+        results = query_runtime_service.execute_multi(
             config,
             database=database,
             schema=schema,
             sql=sql,
             max_rows=payload.get("maxRows"),
+            policy_plans=policy_plans,
         )
+        _record_query_audit(
+            db,
+            current_user=current_user,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=";\n".join(plan.sql for plan in policy_plans),
+            statement_count=len(policy_plans),
+            status_value="succeeded",
+            duration_ms=sum(int(result.get("execution_time_ms") or 0) for result in results),
+            affected_rows=sum(int(result.get("affected_rows") or 0) for result in results),
+            metadata=_audit_metadata({"policy": [result.get("policy") for result in results if result.get("policy")]}),
+        )
+        _commit_audit(db)
+        return results
+    except QueryPolicyViolation as exc:
+        _record_policy_event(
+            db,
+            current_user=current_user,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            action="rejected",
+            outcome="denied",
+            summaries=[exc.summary],
+            error=str(exc),
+        )
+        _record_query_audit(
+            db,
+            current_user=current_user,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=sql,
+            statement_count=max(len(query_runtime_service.split_sql(sql)), 1),
+            status_value="blocked",
+            error_message=str(exc),
+            metadata={"policy": exc.summary},
+        )
+        _commit_audit(db)
+        raise _runtime_error_to_http(exc) from exc
     except Exception as exc:
+        _record_query_audit(
+            db,
+            current_user=current_user,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=sql,
+            statement_count=max(len(query_runtime_service.split_sql(sql)), 1),
+            status_value="failed",
+            error_message=str(exc),
+        )
+        _commit_audit(db)
         raise _runtime_error_to_http(exc) from exc
 
 
@@ -1034,6 +1349,17 @@ def execute_batch(
         sql=";\n".join(str(statement) for statement in statements),
     )
     try:
+        _reject_policy_controlled_batch(
+            db=db,
+            current_user=current_user,
+            authorization_service=authorization_service,
+            config=config,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=";\n".join(str(statement) for statement in statements),
+            action="execute_batch",
+        )
         return query_runtime_service.execute_batch(
             config,
             database=database,
@@ -1060,6 +1386,17 @@ def execute_script(
     config = _connection_or_400(db, connection_id, current_user.id)
     _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
     try:
+        _reject_policy_controlled_batch(
+            db=db,
+            current_user=current_user,
+            authorization_service=authorization_service,
+            config=config,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=sql,
+            action="execute_script",
+        )
         statements = query_runtime_service.split_sql(sql)
         return query_runtime_service.execute_batch(
             config,
@@ -1099,6 +1436,17 @@ def execute_in_transaction(
         sql=";\n".join(str(statement) for statement in statements),
     )
     try:
+        _reject_policy_controlled_batch(
+            db=db,
+            current_user=current_user,
+            authorization_service=authorization_service,
+            config=config,
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=";\n".join(str(statement) for statement in statements),
+            action="execute_in_transaction",
+        )
         return query_runtime_service.execute_batch(
             config,
             database=database,
