@@ -122,7 +122,7 @@ Legacy import still accepts cleartext secrets from SQLite `connection_secrets`, 
 
 ## Rollback Notes
 
-The `0008_connection_secret_store` migration intentionally removes sensitive fields from `connection_profile.config` before the application can write encrypted rows. If a rollback is required after secrets have been stored, keep a database backup that includes `connection_secret` and the exact `DBX_CONNECTION_SECRET_KEY`; otherwise connection passwords cannot be recovered. Downgrading the migration drops `connection_secret` and does not write cleartext secrets back into JSONB.
+The `0009_connection_secret_store` migration intentionally removes sensitive fields from `connection_profile.config` before the application can write encrypted rows. If a rollback is required after secrets have been stored, keep a database backup that includes `connection_secret` and the exact `DBX_CONNECTION_SECRET_KEY`; otherwise connection passwords cannot be recovered. Downgrading the migration drops `connection_secret` and does not write cleartext secrets back into JSONB.
 
 ## Web Runtime Local State Boundary
 

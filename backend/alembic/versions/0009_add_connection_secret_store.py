@@ -1,7 +1,7 @@
 """add connection secret store
 
-Revision ID: 0008_connection_secret_store
-Revises: 0007_config_migration
+Revision ID: 0009_connection_secret_store
+Revises: 0008_audit_trace_columns
 Create Date: 2026-05-31 00:00:00.000000
 """
 
@@ -14,8 +14,8 @@ import sqlalchemy as sa
 from cryptography.fernet import Fernet
 
 
-revision: str = "0008_connection_secret_store"
-down_revision: str | None = "0007_config_migration"
+revision: str = "0009_connection_secret_store"
+down_revision: str | None = "0008_audit_trace_columns"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 
