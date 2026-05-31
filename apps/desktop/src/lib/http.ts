@@ -475,6 +475,10 @@ function qs(params: Record<string, string | number | undefined>): string {
   return sp.toString();
 }
 
+function disabledWebRuntimeFeature(name: string): never {
+  throw new Error(`${name} is disabled in DBX web-only mode`);
+}
+
 // ---------------------------------------------------------------------------
 // Connection
 // ---------------------------------------------------------------------------
@@ -825,7 +829,8 @@ export async function getTableDdl(
 }
 
 export async function prepareSchemaDiff(options: SchemaDiffPreparationOptions): Promise<SchemaDiffPreparation> {
-  return post("/api/schema-diff/prepare", options);
+  void options;
+  disabledWebRuntimeFeature("Schema diff");
 }
 
 export async function generateSchemaSyncSql(
@@ -833,7 +838,10 @@ export async function generateSchemaSyncSql(
   databaseType: DatabaseType,
   targetSchema?: string,
 ): Promise<string> {
-  return post("/api/schema-diff/generate-sync-sql", { diffs, databaseType, targetSchema });
+  void diffs;
+  void databaseType;
+  void targetSchema;
+  disabledWebRuntimeFeature("Schema diff");
 }
 
 // ---------------------------------------------------------------------------
@@ -1075,13 +1083,15 @@ export async function buildDatabaseSqlExport(options: BuildDatabaseSqlExportOpti
 }
 
 export async function prepareDataCompare(options: DataComparePreparationOptions): Promise<DataComparePreparation> {
-  return post("/api/data-compare/prepare", options);
+  void options;
+  disabledWebRuntimeFeature("Data compare");
 }
 
 export async function prepareDataCompareFromTables(
   options: DataCompareFromTablesOptions,
 ): Promise<DataCompareFromTablesPreparation> {
-  return post("/api/data-compare/prepare-from-tables", options);
+  void options;
+  disabledWebRuntimeFeature("Data compare");
 }
 
 // ---------------------------------------------------------------------------

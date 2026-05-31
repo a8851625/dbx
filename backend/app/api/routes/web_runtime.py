@@ -274,8 +274,6 @@ def _runtime_error_to_http(exc: Exception) -> HTTPException:
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"message": message, "policy_ids": exc.policy_ids, "policy": exc.summary},
         )
-    if "not supported" in message.lower():
-        return HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=message)
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
 
 
@@ -889,6 +887,35 @@ def save_editor_settings(
     db: Session = Depends(get_db),
 ) -> dict[str, bool]:
     runtime_state_service.save_editor_settings(db, current_user.id, dict(payload.get("settings") or {}))
+    return {"ok": True}
+
+
+@router.get("/schema/cache")
+def load_schema_cache(
+    cache_key: str = Query(alias="cache_key"),
+    current_user: UserIdentity = Depends(require_permission("datasource.browse")),
+    db: Session = Depends(get_db),
+) -> Any:
+    return runtime_state_service.load_schema_cache(db, current_user.id, cache_key)
+
+
+@router.post("/schema/cache")
+def save_schema_cache(
+    payload: dict[str, Any],
+    current_user: UserIdentity = Depends(require_permission("datasource.browse")),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    runtime_state_service.save_schema_cache(db, current_user.id, str(payload.get("cacheKey") or ""), payload.get("payload"))
+    return {"ok": True}
+
+
+@router.delete("/schema/cache-prefix")
+def delete_schema_cache_prefix(
+    prefix: str = Query(default=""),
+    current_user: UserIdentity = Depends(require_permission("datasource.browse")),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    runtime_state_service.delete_schema_cache_prefix(db, current_user.id, prefix)
     return {"ok": True}
 
 
@@ -1709,19 +1736,19 @@ def analyze_editability(
 
 @router.post("/schema-diff/prepare")
 def schema_diff_prepare(_: dict[str, Any]) -> None:
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Schema diff is not available in web-only mode")
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Schema diff is disabled in web-only mode")
 
 
 @router.post("/schema-diff/generate-sync-sql")
 def schema_diff_generate(_: dict[str, Any]) -> None:
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Schema diff is not available in web-only mode")
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Schema diff is disabled in web-only mode")
 
 
 @router.post("/data-compare/prepare")
 def data_compare_prepare(_: dict[str, Any]) -> None:
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Data compare is not available in web-only mode")
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Data compare is disabled in web-only mode")
 
 
 @router.post("/data-compare/prepare-from-tables")
 def data_compare_prepare_from_tables(_: dict[str, Any]) -> None:
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Data compare is not available in web-only mode")
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Data compare is disabled in web-only mode")

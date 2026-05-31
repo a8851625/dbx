@@ -20,3 +20,9 @@ test("web runtime exposes editor settings endpoints", () => {
   assert.match(runtimeRouteSource, /@router\.get\("\/editor-settings"\)/);
   assert.match(runtimeRouteSource, /@router\.post\("\/editor-settings"\)/);
 });
+
+test("web runtime exposes schema tree cache endpoints", () => {
+  assert.match(runtimeRouteSource, /@router\.get\("\/schema\/cache"\)/);
+  assert.match(runtimeRouteSource, /@router\.post\("\/schema\/cache"\)/);
+  assert.match(runtimeRouteSource, /@router\.delete\("\/schema\/cache-prefix"\)/);
+});

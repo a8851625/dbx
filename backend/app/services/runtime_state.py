@@ -23,6 +23,7 @@ class RuntimeStateService:
     AI_CONFIG_KEY = "ai_config"
     DESKTOP_SETTINGS_KEY = "desktop_settings"
     EDITOR_SETTINGS_KEY = "editor_settings"
+    SCHEMA_CACHE_PREFIX = "schema_cache:"
 
     def load_connections(self, db: Session, user_id: str) -> list[dict[str, Any]]:
         profiles = db.execute(
@@ -105,6 +106,22 @@ class RuntimeStateService:
 
     def save_editor_settings(self, db: Session, user_id: str, settings: dict[str, Any], *, commit: bool = True) -> None:
         self._set_preference(db, user_id, self.EDITOR_SETTINGS_KEY, settings, commit=commit)
+
+    def load_schema_cache(self, db: Session, user_id: str, cache_key: str) -> Any:
+        return self._get_preference(db, user_id, self._schema_cache_key(cache_key))
+
+    def save_schema_cache(self, db: Session, user_id: str, cache_key: str, payload: Any, *, commit: bool = True) -> None:
+        self._set_preference(db, user_id, self._schema_cache_key(cache_key), payload, commit=commit)
+
+    def delete_schema_cache_prefix(self, db: Session, user_id: str, prefix: str, *, commit: bool = True) -> None:
+        preference_prefix = self._schema_cache_key(prefix)
+        db.execute(
+            delete(UserPreference).where(
+                UserPreference.owner_user_id == user_id,
+                UserPreference.preference_key.startswith(preference_prefix),
+            )
+        )
+        self._commit_or_flush(db, commit=commit)
 
     def load_saved_sql_library(self, db: Session, user_id: str) -> dict[str, list[dict[str, Any]]]:
         folders = db.execute(
@@ -326,6 +343,9 @@ class RuntimeStateService:
 
     def _preference_id(self, user_id: str, key: str) -> str:
         return hashlib.sha256(f"{user_id}:{key}".encode("utf-8")).hexdigest()[:32]
+
+    def _schema_cache_key(self, cache_key: str) -> str:
+        return f"{self.SCHEMA_CACHE_PREFIX}{cache_key}"
 
     def _connection_payload(self, profile: ConnectionProfile) -> dict[str, Any]:
         payload = dict(profile.config or {})
