@@ -123,7 +123,7 @@ async def callback(
     try:
         auth_request = auth_service.consume_authorization_request(db, state)
         claims = await auth_service.exchange_code_for_claims(code)
-        auth_service.validate_claims(claims)
+        auth_service.validate_auth_request_claims(claims, auth_request)
     except Exception as exc:
         audit_service.record_event(
             db,

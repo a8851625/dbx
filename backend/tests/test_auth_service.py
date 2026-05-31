@@ -125,6 +125,44 @@ class AuthServiceTests(unittest.TestCase):
 
         self.assertEqual(ctx.exception.status_code, 403)
 
+    def test_validate_auth_request_claims_rejects_nonce_mismatch(self) -> None:
+        service = AuthService(Settings())
+        auth_request = OidcAuthRequest(
+            state="state-1",
+            provider_id="default",
+            nonce="expected-nonce",
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+        with self.assertRaises(HTTPException) as ctx:
+            service.validate_auth_request_claims(
+                {"sub": "user-1", "email": "admin@example.com", "nonce": "other-nonce"},
+                auth_request,
+            )
+
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_resolve_user_role_uses_claim_mapping(self) -> None:
+        service = AuthService(Settings(oidc_default_role="viewer", oidc_groups_claim="groups"))
+
+        self.assertEqual(service.resolve_user_role({"groups": ["dbx-admin"]}), "admin")
+        self.assertEqual(service.resolve_user_role({"groups": ["dbx-editor"]}), "editor")
+        self.assertEqual(service.resolve_user_role({"groups": ["other"]}), "viewer")
+
+    def test_resolve_user_role_preserves_existing_role_when_no_claim_match(self) -> None:
+        service = AuthService(Settings(oidc_default_role="viewer"))
+
+        self.assertEqual(service.resolve_user_role({"groups": ["other"]}, existing_role="editor"), "editor")
+
+    def test_mock_id_token_decode_supports_nonce_validation(self) -> None:
+        token = "eyJhbGciOiAibm9uZSJ9.eyJzdWIiOiAidXNlci0xIiwgImVtYWlsIjogImFkbWluQGV4YW1wbGUuY29tIiwgIm5vbmNlIjogIm5vbmNlLTEifQ."
+        service = AuthService(Settings(oidc_mock_mode=True))
+
+        claims = service.verify_id_token(token)
+
+        self.assertEqual(claims["sub"], "user-1")
+        self.assertEqual(claims["nonce"], "nonce-1")
+
 
 class AuthServiceAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_exchange_code_for_claims_returns_mock_claims(self) -> None:
