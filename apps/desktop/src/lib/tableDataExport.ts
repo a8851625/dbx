@@ -4,12 +4,16 @@ import { buildTableSelectSql } from "./tableSelectSql.ts";
 export const TABLE_DATA_EXPORT_PAGE_SIZE = 10_000;
 
 export interface FetchTableDataForExportOptions {
+  connectionId?: string;
+  database?: string;
   databaseType?: DatabaseType;
   schema?: string;
   tableName: string;
   columns?: string[];
   pageSize?: number;
   buildPageSql?: (options: {
+    connectionId?: string;
+    database?: string;
     databaseType?: DatabaseType;
     schema?: string;
     tableName: string;
@@ -30,6 +34,8 @@ export async function fetchTableDataForExport(options: FetchTableDataForExportOp
   while (true) {
     const sql = await (options.buildPageSql ?? buildTableSelectSql)({
       databaseType: options.databaseType,
+      connectionId: options.connectionId,
+      database: options.database,
       schema: options.schema,
       tableName: options.tableName,
       columns: options.columns,

@@ -387,7 +387,11 @@ export const useQueryStore = defineStore("query", () => {
       return;
     }
 
-    const editability = await api.analyzeEditableQueryEditability(sql);
+    const editability = await api.analyzeEditableQueryEditability(sql, {
+      connectionId: tab.connectionId,
+      database: tab.database,
+      schema: tab.schema,
+    });
     if (!editability.editable) {
       tab.queryAnalysis = undefined;
       tab.querySourceColumns = undefined;
@@ -504,6 +508,9 @@ export const useQueryStore = defineStore("query", () => {
       if (tab.mode === "query") {
         const pagination = options?.pagination ?? { limit: settingsStore.editorSettings.pageSize, offset: 0 };
         const plan = await api.prepareQueryPaginationExecutionPlan({
+          connectionId: tab.connectionId,
+          database: tab.database,
+          schema: tab.schema,
           sql,
           queryBaseSql,
           databaseType: conn?.db_type,
@@ -678,7 +685,11 @@ export const useQueryStore = defineStore("query", () => {
     const tab = tabs.value.find((t) => t.id === id);
     if (!tab) return { ok: false as const, reason: "empty" as const };
 
-    const built = await buildExplainSql(databaseType, sql);
+    const built = await buildExplainSql(databaseType, sql, {
+      connectionId: tab.connectionId,
+      database: tab.database,
+      schema: tab.schema,
+    });
     if (!built.ok) {
       tab.explainPlan = undefined;
       tab.explainError = built.reason;

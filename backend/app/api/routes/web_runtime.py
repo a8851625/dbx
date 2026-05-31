@@ -5,10 +5,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import get_authorization_service, get_current_user, require_permission
 from app.config import get_settings
 from app.db.session import get_db
 from app.models.auth import UserIdentity
+from app.services.authorization import AuthorizationService
 from app.services.query_runtime import QueryRuntimeService
 from app.services.runtime_state import RuntimeStateService
 from app.services.sql_classification import (
@@ -34,6 +35,231 @@ def _connection_or_400(db: Session, connection_id: str, user_id: str | None = No
         return query_runtime_service.resolve_connection_config(db, connection_id, owner_user_id=user_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _ensure_resource_permission(
+    db: Session,
+    authorization_service: AuthorizationService,
+    current_user: UserIdentity,
+    permission_code: str,
+    *,
+    datasource_id: str | None = None,
+    database: str | None = None,
+    schema: str | None = None,
+    table: str | None = None,
+) -> None:
+    context = authorization_service.build_access_context(db, current_user)
+    decision = authorization_service.check_permission(
+        context,
+        permission_code,
+        datasource_id=datasource_id,
+        database=database or None,
+        schema=schema or None,
+        table=table or None,
+    )
+    if not decision.allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=decision.reason or "Forbidden")
+
+
+def _resource_allowed(
+    db: Session,
+    authorization_service: AuthorizationService,
+    current_user: UserIdentity,
+    permission_code: str,
+    *,
+    datasource_id: str | None = None,
+    database: str | None = None,
+    schema: str | None = None,
+    table: str | None = None,
+) -> bool:
+    context = authorization_service.build_access_context(db, current_user)
+    return authorization_service.check_permission(
+        context,
+        permission_code,
+        datasource_id=datasource_id,
+        database=database or None,
+        schema=schema or None,
+        table=table or None,
+    ).allowed
+
+
+def _authorize_configured_connection(
+    db: Session,
+    authorization_service: AuthorizationService,
+    current_user: UserIdentity,
+    permission_code: str,
+    config: dict[str, Any],
+    *,
+    database: str | None = None,
+    schema: str | None = None,
+    table: str | None = None,
+) -> None:
+    _ensure_resource_permission(
+        db,
+        authorization_service,
+        current_user,
+        permission_code,
+        datasource_id=str(config.get("id") or ""),
+        database=database,
+        schema=schema,
+        table=table,
+    )
+
+
+def _authorize_query_scope(
+    db: Session,
+    authorization_service: AuthorizationService,
+    current_user: UserIdentity,
+    payload: dict[str, Any],
+    *,
+    sql: str | None = None,
+) -> None:
+    datasource_id = str(payload.get("connectionId") or "")
+    database = str(payload.get("database") or "") or None
+    schema = payload.get("schema") if isinstance(payload.get("schema"), str) else None
+    table = payload.get("tableName") or payload.get("table")
+    table = str(table) if table else None
+    references = query_runtime_service.extract_table_references(sql or "", default_schema=schema)
+    if not references:
+        _ensure_resource_permission(
+            db,
+            authorization_service,
+            current_user,
+            "query.execute",
+            datasource_id=datasource_id,
+            database=database,
+            schema=schema,
+            table=table,
+        )
+        return
+
+    for reference in references:
+        _ensure_resource_permission(
+            db,
+            authorization_service,
+            current_user,
+            "query.execute",
+            datasource_id=datasource_id,
+            database=reference.database or database,
+            schema=reference.schema,
+            table=reference.table,
+        )
+
+
+def _authorize_query_builder_options(
+    db: Session,
+    authorization_service: AuthorizationService,
+    current_user: UserIdentity,
+    options: dict[str, Any],
+) -> None:
+    datasource_id = options.get("connectionId")
+    if not datasource_id:
+        return
+    _ensure_resource_permission(
+        db,
+        authorization_service,
+        current_user,
+        "query.execute",
+        datasource_id=str(datasource_id),
+        database=str(options.get("database") or "") or None,
+        schema=str(options.get("schema") or "") or None,
+        table=str(options.get("tableName") or options.get("table") or "") or None,
+    )
+
+
+def _filter_authorized_connections(
+    db: Session,
+    authorization_service: AuthorizationService,
+    current_user: UserIdentity,
+    configs: list[dict[str, Any]],
+    permission_code: str,
+) -> list[dict[str, Any]]:
+    return [
+        config
+        for config in configs
+        if _resource_allowed(
+            db,
+            authorization_service,
+            current_user,
+            permission_code,
+            datasource_id=str(config.get("id") or ""),
+            database=str(config.get("database") or "") or None,
+        )
+    ]
+
+
+def _filter_authorized_databases(
+    db: Session,
+    authorization_service: AuthorizationService,
+    current_user: UserIdentity,
+    config: dict[str, Any],
+    databases: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    datasource_id = str(config.get("id") or "")
+    return [
+        database
+        for database in databases
+        if _resource_allowed(
+            db,
+            authorization_service,
+            current_user,
+            "datasource.browse",
+            datasource_id=datasource_id,
+            database=str(database.get("name") or "") or None,
+        )
+    ]
+
+
+def _filter_authorized_schemas(
+    db: Session,
+    authorization_service: AuthorizationService,
+    current_user: UserIdentity,
+    config: dict[str, Any],
+    *,
+    database: str,
+    schemas: list[str],
+) -> list[str]:
+    datasource_id = str(config.get("id") or "")
+    return [
+        schema
+        for schema in schemas
+        if _resource_allowed(
+            db,
+            authorization_service,
+            current_user,
+            "datasource.browse",
+            datasource_id=datasource_id,
+            database=database,
+            schema=schema,
+        )
+    ]
+
+
+def _filter_authorized_tables(
+    db: Session,
+    authorization_service: AuthorizationService,
+    current_user: UserIdentity,
+    config: dict[str, Any],
+    *,
+    database: str,
+    schema: str | None,
+    tables: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    datasource_id = str(config.get("id") or "")
+    return [
+        table
+        for table in tables
+        if _resource_allowed(
+            db,
+            authorization_service,
+            current_user,
+            "datasource.browse",
+            datasource_id=datasource_id,
+            database=database,
+            schema=schema,
+            table=str(table.get("name") or "") or None,
+        )
+    ]
 
 
 def _runtime_error_to_http(exc: Exception) -> HTTPException:
@@ -142,9 +368,20 @@ def check_updates() -> dict[str, Any]:
 @router.post("/connection/test")
 def test_connection(
     payload: dict[str, Any],
-    _: UserIdentity = Depends(require_permission("datasource.manage")),
+    current_user: UserIdentity = Depends(require_permission("datasource.manage")),
+    db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> str:
     config = dict(payload.get("config") or {})
+    if config.get("id"):
+        _authorize_configured_connection(
+            db,
+            authorization_service,
+            current_user,
+            "datasource.connect",
+            config,
+            database=str(config.get("database") or "") or None,
+        )
     try:
         query_runtime_service.register_connection(config)
         return query_runtime_service.test_connection(config)
@@ -155,11 +392,21 @@ def test_connection(
 @router.post("/connection/connect")
 def connect_db(
     payload: dict[str, Any],
-    _: UserIdentity = Depends(require_permission("datasource.connect")),
+    current_user: UserIdentity = Depends(require_permission("datasource.connect")),
+    db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> str:
     config = dict(payload.get("config") or {})
     if not config.get("id"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Connection id is required")
+    _authorize_configured_connection(
+        db,
+        authorization_service,
+        current_user,
+        "datasource.connect",
+        config,
+        database=str(config.get("database") or "") or None,
+    )
     try:
         query_runtime_service.test_connection(config)
         query_runtime_service.register_connection(config)
@@ -183,8 +430,20 @@ def save_connections(
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("datasource.manage")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, bool]:
     configs = list(payload.get("configs") or [])
+    for config in configs:
+        if not isinstance(config, dict):
+            continue
+        _authorize_configured_connection(
+            db,
+            authorization_service,
+            current_user,
+            "datasource.manage",
+            config,
+            database=str(config.get("database") or "") or None,
+        )
     runtime_state_service.save_connections(db, current_user.id, configs)
     for config in configs:
         query_runtime_service.register_connection(dict(config))
@@ -195,8 +454,10 @@ def save_connections(
 def load_connections(
     current_user: UserIdentity = Depends(require_permission("menu.connections.view")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[dict[str, Any]]:
-    return runtime_state_service.load_connections(db, current_user.id)
+    configs = runtime_state_service.load_connections(db, current_user.id)
+    return _filter_authorized_connections(db, authorization_service, current_user, configs, "datasource.browse")
 
 
 @router.get("/layout/sidebar")
@@ -407,10 +668,13 @@ def list_databases(
     connection_id: str = Query(alias="connection_id"),
     current_user: UserIdentity = Depends(require_permission("datasource.browse")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[dict[str, Any]]:
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_configured_connection(db, authorization_service, current_user, "datasource.browse", config)
     try:
-        return query_runtime_service.list_databases(config)
+        databases = query_runtime_service.list_databases(config)
+        return _filter_authorized_databases(db, authorization_service, current_user, config, databases)
     except Exception as exc:
         raise _runtime_error_to_http(exc) from exc
 
@@ -421,10 +685,27 @@ def list_schemas(
     database: str = Query(default=""),
     current_user: UserIdentity = Depends(require_permission("datasource.browse")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[str]:
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_configured_connection(
+        db,
+        authorization_service,
+        current_user,
+        "datasource.browse",
+        config,
+        database=database,
+    )
     try:
-        return query_runtime_service.list_schemas(config, database)
+        schemas = query_runtime_service.list_schemas(config, database)
+        return _filter_authorized_schemas(
+            db,
+            authorization_service,
+            current_user,
+            config,
+            database=database,
+            schemas=schemas,
+        )
     except Exception as exc:
         raise _runtime_error_to_http(exc) from exc
 
@@ -438,15 +719,34 @@ def list_tables(
     limit: int | None = Query(default=None),
     current_user: UserIdentity = Depends(require_permission("datasource.browse")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[dict[str, Any]]:
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_configured_connection(
+        db,
+        authorization_service,
+        current_user,
+        "datasource.browse",
+        config,
+        database=database,
+        schema=schema,
+    )
     try:
-        return query_runtime_service.list_tables(
+        tables = query_runtime_service.list_tables(
             config,
             database=database,
             schema=schema,
             filter_text=filter_text,
             limit=limit,
+        )
+        return _filter_authorized_tables(
+            db,
+            authorization_service,
+            current_user,
+            config,
+            database=database,
+            schema=schema,
+            tables=tables,
         )
     except Exception as exc:
         raise _runtime_error_to_http(exc) from exc
@@ -459,10 +759,29 @@ def list_objects(
     schema: str | None = Query(default=None),
     current_user: UserIdentity = Depends(require_permission("datasource.browse")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[dict[str, Any]]:
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_configured_connection(
+        db,
+        authorization_service,
+        current_user,
+        "datasource.browse",
+        config,
+        database=database,
+        schema=schema,
+    )
     try:
-        return query_runtime_service.list_objects(config, database=database, schema=schema)
+        objects = query_runtime_service.list_objects(config, database=database, schema=schema)
+        return _filter_authorized_tables(
+            db,
+            authorization_service,
+            current_user,
+            config,
+            database=database,
+            schema=schema,
+            tables=objects,
+        )
     except Exception as exc:
         raise _runtime_error_to_http(exc) from exc
 
@@ -476,8 +795,19 @@ def get_object_source(
     object_type: str = Query(default="VIEW"),
     current_user: UserIdentity = Depends(require_permission("datasource.browse")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_configured_connection(
+        db,
+        authorization_service,
+        current_user,
+        "datasource.browse",
+        config,
+        database=database,
+        schema=schema,
+        table=table,
+    )
     try:
         return query_runtime_service.get_object_source(
             config,
@@ -498,8 +828,19 @@ def get_columns(
     table: str = Query(default=""),
     current_user: UserIdentity = Depends(require_permission("datasource.browse")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[dict[str, Any]]:
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_configured_connection(
+        db,
+        authorization_service,
+        current_user,
+        "datasource.browse",
+        config,
+        database=database,
+        schema=schema,
+        table=table,
+    )
     try:
         return query_runtime_service.get_columns(config, database=database, schema=schema, table=table)
     except Exception as exc:
@@ -514,8 +855,19 @@ def list_indexes(
     table: str = Query(default=""),
     current_user: UserIdentity = Depends(require_permission("datasource.browse")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[dict[str, Any]]:
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_configured_connection(
+        db,
+        authorization_service,
+        current_user,
+        "datasource.browse",
+        config,
+        database=database,
+        schema=schema,
+        table=table,
+    )
     try:
         return query_runtime_service.list_indexes(config, database=database, schema=schema, table=table)
     except Exception as exc:
@@ -530,8 +882,19 @@ def list_foreign_keys(
     table: str = Query(default=""),
     current_user: UserIdentity = Depends(require_permission("datasource.browse")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[dict[str, Any]]:
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_configured_connection(
+        db,
+        authorization_service,
+        current_user,
+        "datasource.browse",
+        config,
+        database=database,
+        schema=schema,
+        table=table,
+    )
     try:
         return query_runtime_service.list_foreign_keys(config, database=database, schema=schema, table=table)
     except Exception as exc:
@@ -546,8 +909,19 @@ def list_triggers(
     table: str = Query(default=""),
     current_user: UserIdentity = Depends(require_permission("datasource.browse")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[dict[str, Any]]:
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_configured_connection(
+        db,
+        authorization_service,
+        current_user,
+        "datasource.browse",
+        config,
+        database=database,
+        schema=schema,
+        table=table,
+    )
     try:
         return query_runtime_service.list_triggers(config, database=database, schema=schema, table=table)
     except Exception as exc:
@@ -562,8 +936,19 @@ def get_ddl(
     table: str = Query(default=""),
     current_user: UserIdentity = Depends(require_permission("datasource.browse")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> str:
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_configured_connection(
+        db,
+        authorization_service,
+        current_user,
+        "datasource.browse",
+        config,
+        database=database,
+        schema=schema,
+        table=table,
+    )
     try:
         return query_runtime_service.get_table_ddl(config, database=database, schema=schema, table=table)
     except Exception as exc:
@@ -575,6 +960,7 @@ def execute_query(
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
     connection_id = str(payload.get("connectionId") or "")
     database = str(payload.get("database") or "")
@@ -582,6 +968,7 @@ def execute_query(
     sql = str(payload.get("sql") or "")
     _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
     try:
         return query_runtime_service.execute_query(
             config,
@@ -599,6 +986,7 @@ def execute_multi(
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[dict[str, Any]]:
     connection_id = str(payload.get("connectionId") or "")
     database = str(payload.get("database") or "")
@@ -606,6 +994,7 @@ def execute_multi(
     sql = str(payload.get("sql") or "")
     _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
     try:
         return query_runtime_service.execute_multi(
             config,
@@ -623,6 +1012,7 @@ def execute_batch(
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
     connection_id = str(payload.get("connectionId") or "")
     database = str(payload.get("database") or "")
@@ -636,6 +1026,13 @@ def execute_batch(
         statements=statements,
     )
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_query_scope(
+        db,
+        authorization_service,
+        current_user,
+        payload,
+        sql=";\n".join(str(statement) for statement in statements),
+    )
     try:
         return query_runtime_service.execute_batch(
             config,
@@ -653,6 +1050,7 @@ def execute_script(
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
     connection_id = str(payload.get("connectionId") or "")
     database = str(payload.get("database") or "")
@@ -660,6 +1058,7 @@ def execute_script(
     sql = str(payload.get("sql") or "")
     _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
     try:
         statements = query_runtime_service.split_sql(sql)
         return query_runtime_service.execute_batch(
@@ -678,6 +1077,7 @@ def execute_in_transaction(
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
     connection_id = str(payload.get("connectionId") or "")
     database = str(payload.get("database") or "")
@@ -691,6 +1091,13 @@ def execute_in_transaction(
         statements=statements,
     )
     config = _connection_or_400(db, connection_id, current_user.id)
+    _authorize_query_scope(
+        db,
+        authorization_service,
+        current_user,
+        payload,
+        sql=";\n".join(str(statement) for statement in statements),
+    )
     try:
         return query_runtime_service.execute_batch(
             config,
@@ -782,17 +1189,24 @@ def execute_script_internal(
 
 @router.post("/query/close-session")
 def close_session(
-    _: dict[str, Any],
-    __: UserIdentity = Depends(require_permission("query.execute")),
+    payload: dict[str, Any],
+    current_user: UserIdentity = Depends(require_permission("query.execute")),
+    db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> bool:
+    _authorize_query_scope(db, authorization_service, current_user, payload)
     return True
 
 
 @router.post("/query/cancel")
 def cancel_query(
-    _: dict[str, Any],
-    __: UserIdentity = Depends(require_permission("query.execute")),
+    payload: dict[str, Any],
+    current_user: UserIdentity = Depends(require_permission("query.execute")),
+    db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> bool:
+    if payload.get("connectionId"):
+        _authorize_query_scope(db, authorization_service, current_user, payload)
     return False
 
 
@@ -818,25 +1232,73 @@ def find_statement_at_cursor(
 @router.post("/query/prepare-pagination-plan")
 def prepare_query_pagination_execution_plan(
     payload: dict[str, Any],
-    __: UserIdentity = Depends(require_permission("query.execute")),
+    current_user: UserIdentity = Depends(require_permission("query.execute")),
+    db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
-    return query_runtime_service.prepare_pagination_plan(dict(payload.get("options") or {}))
+    options = dict(payload.get("options") or {})
+    _authorize_query_builder_options(db, authorization_service, current_user, options)
+    if options.get("connectionId"):
+        _authorize_query_scope(
+            db,
+            authorization_service,
+            current_user,
+            {
+                "connectionId": options.get("connectionId"),
+                "database": options.get("database"),
+                "schema": options.get("schema"),
+            },
+            sql=str(options.get("queryBaseSql") or options.get("sql") or ""),
+        )
+    return query_runtime_service.prepare_pagination_plan(options)
 
 
 @router.post("/query/build-sorted-sql")
 def build_sorted_query_sql(
     payload: dict[str, Any],
-    __: UserIdentity = Depends(require_permission("query.execute")),
+    current_user: UserIdentity = Depends(require_permission("query.execute")),
+    db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
-    return query_runtime_service.build_sorted_query_sql(dict(payload.get("options") or {}))
+    options = dict(payload.get("options") or {})
+    _authorize_query_builder_options(db, authorization_service, current_user, options)
+    if options.get("connectionId"):
+        _authorize_query_scope(
+            db,
+            authorization_service,
+            current_user,
+            {
+                "connectionId": options.get("connectionId"),
+                "database": options.get("database"),
+                "schema": options.get("schema"),
+            },
+            sql=str(options.get("originalSql") or ""),
+        )
+    return query_runtime_service.build_sorted_query_sql(options)
 
 
 @router.post("/query/build-explain-sql")
 def build_explain_sql(
     payload: dict[str, Any],
-    __: UserIdentity = Depends(require_permission("query.execute")),
+    current_user: UserIdentity = Depends(require_permission("query.execute")),
+    db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
-    return query_runtime_service.build_explain_sql(dict(payload.get("options") or {}))
+    options = dict(payload.get("options") or {})
+    _authorize_query_builder_options(db, authorization_service, current_user, options)
+    if options.get("connectionId"):
+        _authorize_query_scope(
+            db,
+            authorization_service,
+            current_user,
+            {
+                "connectionId": options.get("connectionId"),
+                "database": options.get("database"),
+                "schema": options.get("schema"),
+            },
+            sql=str(options.get("sql") or ""),
+        )
+    return query_runtime_service.build_explain_sql(options)
 
 
 @router.post("/query/build-dropped-file-preview-sql")
@@ -850,16 +1312,24 @@ def build_dropped_file_preview_sql(
 @router.post("/query/build-table-select-sql")
 def build_table_select_sql(
     payload: dict[str, Any],
-    __: UserIdentity = Depends(require_permission("query.execute")),
+    current_user: UserIdentity = Depends(require_permission("query.execute")),
+    db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> str:
-    return query_runtime_service.build_table_select_sql(dict(payload.get("options") or {}))
+    options = dict(payload.get("options") or {})
+    _authorize_query_builder_options(db, authorization_service, current_user, options)
+    return query_runtime_service.build_table_select_sql(options)
 
 
 @router.post("/query/analyze-editability")
 def analyze_editability(
-    _: dict[str, Any],
-    __: UserIdentity = Depends(require_permission("query.execute")),
+    payload: dict[str, Any],
+    current_user: UserIdentity = Depends(require_permission("query.execute")),
+    db: Session = Depends(get_db),
+    authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
+    if payload.get("connectionId"):
+        _authorize_query_scope(db, authorization_service, current_user, payload, sql=str(payload.get("sql") or ""))
     return {"editable": False, "reason": "metadata-unavailable"}
 
 

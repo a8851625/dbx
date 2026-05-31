@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import math
+import re
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl
 
-import sqlparse
 from sqlalchemy import MetaData, Table, create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.schema import CreateTable
@@ -24,6 +25,13 @@ POSTGRES_FAMILY = {"postgres", "redshift", "gaussdb", "kingbase", "highgo", "vas
 MYSQL_FAMILY = {"mysql", "doris", "starrocks", "goldendb"}
 SQLITE_FAMILY = {"sqlite"}
 SUPPORTED_TYPES = POSTGRES_FAMILY | MYSQL_FAMILY | SQLITE_FAMILY
+
+
+@dataclass(frozen=True)
+class SqlTableReference:
+    database: str | None
+    schema: str | None
+    table: str
 
 
 class QueryRuntimeService:
@@ -515,7 +523,32 @@ class QueryRuntimeService:
         return sql
 
     def split_sql(self, sql: str) -> list[str]:
-        return [statement.strip() for statement in sqlparse.split(sql) if statement.strip()]
+        try:
+            import sqlparse
+
+            return [statement.strip() for statement in sqlparse.split(sql) if statement.strip()]
+        except ModuleNotFoundError:
+            return [statement.strip() for statement in sql.split(";") if statement.strip()]
+
+    def extract_table_references(
+        self,
+        sql: str,
+        *,
+        default_schema: str | None = None,
+    ) -> list[SqlTableReference]:
+        references: list[SqlTableReference] = []
+        seen: set[tuple[str | None, str | None, str]] = set()
+        for statement in self.split_sql(sql):
+            for raw_identifier in self._table_identifier_candidates(statement):
+                reference = self._parse_table_identifier(raw_identifier, default_schema=default_schema)
+                if reference is None:
+                    continue
+                key = (reference.database, reference.schema, reference.table)
+                if key in seen:
+                    continue
+                seen.add(key)
+                references.append(reference)
+        return references
 
     def _execute_single(
         self,
@@ -556,6 +589,47 @@ class QueryRuntimeService:
                 }
         finally:
             engine.dispose()
+
+    def _table_identifier_candidates(self, sql: str) -> list[str]:
+        cleaned = re.sub(r"/\*[\s\S]*?\*/", " ", sql)
+        cleaned = re.sub(r"--.*?$", " ", cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r"#.*?$", " ", cleaned, flags=re.MULTILINE)
+        pattern = re.compile(
+            r"\b(?:from|join|update|into)\s+([^\s,;()]+)"
+            r"|\b(?:alter|drop|truncate|create)\s+table\s+"
+            r"(?:if\s+(?:not\s+)?exists\s+)?([^\s,;()]+)",
+            re.IGNORECASE,
+        )
+        candidates: list[str] = []
+        for match in pattern.finditer(cleaned):
+            value = match.group(1) or match.group(2)
+            if value:
+                candidates.append(value)
+        return candidates
+
+    def _parse_table_identifier(self, raw: str, *, default_schema: str | None) -> SqlTableReference | None:
+        value = raw.strip().rstrip(",;")
+        if not value or value.startswith("("):
+            return None
+        if value.lower() in {"select", "values", "set"}:
+            return None
+        parts = [self._unquote_identifier(part) for part in value.split(".")]
+        parts = [part for part in parts if part]
+        if not parts:
+            return None
+        if len(parts) >= 3:
+            return SqlTableReference(database=parts[-3], schema=parts[-2], table=parts[-1])
+        if len(parts) == 2:
+            return SqlTableReference(database=None, schema=parts[0], table=parts[1])
+        return SqlTableReference(database=None, schema=default_schema, table=parts[0])
+
+    def _unquote_identifier(self, value: str) -> str:
+        stripped = value.strip()
+        if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {'"', "'", "`"}:
+            stripped = stripped[1:-1]
+        elif stripped.startswith("[") and stripped.endswith("]"):
+            stripped = stripped[1:-1]
+        return stripped.replace('""', '"').replace("``", "`").replace("]]", "]")
 
     def _create_engine(self, config: dict[str, Any], *, database_override: str | None = None) -> Engine:
         database_type = self._database_type(config)

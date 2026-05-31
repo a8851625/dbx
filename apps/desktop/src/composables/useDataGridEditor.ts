@@ -697,7 +697,7 @@ export function useDataGridEditor(options: UseDataGridEditorOptions) {
       }
     } else if (connectionId.value && database.value) {
       try {
-        apiResult = await api.executeBatch(connectionId.value, database.value, stmts);
+        apiResult = await api.executeBatch(connectionId.value, database.value, stmts, preparedSave?.executionSchema);
       } catch (e: any) {
         saveError.value = normalizeDataGridSaveError(databaseType.value, e);
         isSaving.value = false;

@@ -4,15 +4,15 @@ import sys
 import types
 import unittest
 
-from app.config import Settings
-from app.models.approval import ChangeTicket, ChangeTicketStatement, ExecutionJob, ExecutionStatementResult
-from app.models.audit import AuditEvent, QueryAudit
-
 fake_session_module = types.ModuleType("app.db.session")
 fake_session_module.SessionLocal = None
+fake_session_module.get_db = lambda: None
 sys.modules.setdefault("app.db.session", fake_session_module)
 
+from app.config import Settings
 from app.services.execution import ExecutionService
+from app.models.approval import ChangeTicket, ChangeTicketStatement, ExecutionJob, ExecutionStatementResult
+from app.models.audit import AuditEvent, QueryAudit
 
 
 class FakeExecutionDB:

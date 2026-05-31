@@ -1004,8 +1004,11 @@ export async function buildCreateTableSql(
   return post("/api/query/build-create-table-sql", { options });
 }
 
-export async function analyzeEditableQueryEditability(sql: string): Promise<QueryEditability> {
-  return post("/api/query/analyze-editability", { sql });
+export async function analyzeEditableQueryEditability(
+  sql: string,
+  resource?: { connectionId?: string; database?: string; schema?: string },
+): Promise<QueryEditability> {
+  return post("/api/query/analyze-editability", { sql, ...resource });
 }
 
 export async function prepareDataGridSave(options: DataGridSaveStatementOptions): Promise<DataGridSavePreparation> {

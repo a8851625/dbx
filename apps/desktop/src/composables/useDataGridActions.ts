@@ -36,6 +36,8 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
         : undefined;
     const useRowId = usesSyntheticRowIdKey(config?.db_type, primaryKeys);
     return buildTableSelectSql({
+      connectionId: tab.connectionId,
+      database: tab.database,
       databaseType: config?.db_type,
       schema: tab.tableMeta?.schema,
       tableName: tab.tableMeta?.tableName ?? "",
@@ -145,6 +147,9 @@ export function useDataGridActions(activeTab: ComputedRef<QueryTab | undefined>)
 
     const config = connectionStore.getConfig(tab.connectionId);
     const built = await api.buildSortedQuerySql({
+      connectionId: tab.connectionId,
+      database: tab.database,
+      schema: tab.schema,
       originalSql: baseSql,
       databaseType: config?.db_type,
       resultColumns: tab.result?.columns ?? [],

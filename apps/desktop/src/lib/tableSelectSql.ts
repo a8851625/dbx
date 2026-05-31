@@ -3,6 +3,8 @@ import { isSchemaAware } from "./databaseCapabilities.ts";
 import * as api from "./api.ts";
 
 export interface BuildTableSelectSqlOptions {
+  connectionId?: string;
+  database?: string;
   databaseType?: DatabaseType;
   schema?: string;
   tableName: string;

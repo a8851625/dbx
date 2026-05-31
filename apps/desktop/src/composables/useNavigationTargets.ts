@@ -34,6 +34,8 @@ async function openTableTarget(target: NavigationTarget) {
       const columns = await api.getColumns(target.connectionId, target.database, querySchema, target.tableName);
       const primaryKeys = editablePrimaryKeys(config.db_type, columns);
       const sql = await buildTableSelectSql({
+        connectionId: target.connectionId,
+        database: target.database,
         databaseType: config.db_type,
         schema: target.schema,
         tableName: target.tableName,
@@ -53,6 +55,8 @@ async function openTableTarget(target: NavigationTarget) {
       return;
     }
     const sql = await buildTableSelectSql({
+      connectionId: target.connectionId,
+      database: target.database,
       databaseType: config.db_type,
       schema: target.schema,
       tableName: target.tableName,
@@ -81,6 +85,8 @@ async function openTableTarget(target: NavigationTarget) {
       });
       if (useRowId || config.db_type === "tdengine") {
         const newSql = await buildTableSelectSql({
+          connectionId: target.connectionId,
+          database: target.database,
           databaseType: config.db_type,
           schema: target.schema,
           tableName: target.tableName,

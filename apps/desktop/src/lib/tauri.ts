@@ -344,6 +344,9 @@ export interface QueryPagination {
 }
 
 export interface QueryPaginationExecutionPlanOptions {
+  connectionId?: string;
+  database?: string;
+  schema?: string;
   sql: string;
   queryBaseSql: string;
   databaseType?: DatabaseType;
@@ -363,6 +366,9 @@ export interface QueryPaginationExecutionPlan {
 export type QuerySortDirection = "asc" | "desc";
 
 export interface SortedQuerySqlOptions {
+  connectionId?: string;
+  database?: string;
+  schema?: string;
   originalSql: string;
   databaseType?: DatabaseType;
   resultColumns: string[];
@@ -378,6 +384,9 @@ export interface QuerySqlBuildResult {
 }
 
 export interface BuildExplainSqlOptions {
+  connectionId?: string;
+  database?: string;
+  schema?: string;
   databaseType?: DatabaseType;
   sql: string;
 }
@@ -839,7 +848,10 @@ export async function buildCreateTableSql(
   return invoke("build_create_table_sql", { options });
 }
 
-export async function analyzeEditableQueryEditability(sql: string): Promise<QueryEditability> {
+export async function analyzeEditableQueryEditability(
+  sql: string,
+  _resource?: { connectionId?: string; database?: string; schema?: string },
+): Promise<QueryEditability> {
   return invoke("analyze_editable_query_editability", { sql });
 }
 

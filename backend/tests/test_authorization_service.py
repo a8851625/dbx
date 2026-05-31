@@ -88,6 +88,115 @@ class AuthorizationServiceTests(unittest.TestCase):
         self.assertFalse(denied.allowed)
         self.assertEqual(denied.reason, "Datasource scope denied: analytics")
 
+    def test_deny_policy_wins_over_allow_policy(self) -> None:
+        context = AccessContext(
+            user=self.user,
+            roles=("developer",),
+            permissions=frozenset({"query.execute"}),
+            policies=(
+                ResourcePolicy(
+                    principal_type="role",
+                    principal_ref="developer",
+                    resource_type="datasource",
+                    resource_key="analytics",
+                    permission_code="query.execute",
+                    effect="allow",
+                    conditions={"databases": ["warehouse"], "schemas": ["public"], "tables": ["orders"]},
+                    enabled=True,
+                ),
+                ResourcePolicy(
+                    principal_type="user",
+                    principal_ref="user-1",
+                    resource_type="datasource",
+                    resource_key="analytics",
+                    permission_code="query.execute",
+                    effect="deny",
+                    conditions={"databases": ["warehouse"], "schemas": ["public"], "tables": ["orders"]},
+                    enabled=True,
+                ),
+            ),
+        )
+
+        decision = self.service.check_permission(
+            context,
+            "query.execute",
+            datasource_id="analytics",
+            database="warehouse",
+            schema="public",
+            table="orders",
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.reason, "Datasource scope denied: analytics")
+
+    def test_deny_policy_requires_matching_concrete_context(self) -> None:
+        context = AccessContext(
+            user=self.user,
+            roles=("developer",),
+            permissions=frozenset({"query.execute"}),
+            policies=(
+                ResourcePolicy(
+                    principal_type="role",
+                    principal_ref="developer",
+                    resource_type="datasource",
+                    resource_key="analytics",
+                    permission_code="query.execute",
+                    effect="allow",
+                    conditions={"databases": ["warehouse"]},
+                    enabled=True,
+                ),
+                ResourcePolicy(
+                    principal_type="role",
+                    principal_ref="developer",
+                    resource_type="datasource",
+                    resource_key="analytics",
+                    permission_code="query.execute",
+                    effect="deny",
+                    conditions={"databases": ["restricted"]},
+                    enabled=True,
+                ),
+            ),
+        )
+
+        decision = self.service.check_permission(
+            context,
+            "query.execute",
+            datasource_id="analytics",
+            database="warehouse",
+        )
+
+        self.assertTrue(decision.allowed)
+
+    def test_table_scope_can_match_schema_qualified_table(self) -> None:
+        context = AccessContext(
+            user=self.user,
+            roles=("developer",),
+            permissions=frozenset({"datasource.browse"}),
+            policies=(
+                ResourcePolicy(
+                    principal_type="role",
+                    principal_ref="developer",
+                    resource_type="datasource",
+                    resource_key="analytics",
+                    permission_code="datasource.browse",
+                    effect="allow",
+                    conditions={"tables": ["public.orders"]},
+                    enabled=True,
+                ),
+            ),
+        )
+
+        decision = self.service.check_permission(
+            context,
+            "datasource.browse",
+            datasource_id="analytics",
+            database="warehouse",
+            schema="public",
+            table="orders",
+        )
+
+        self.assertTrue(decision.allowed)
+
 
 if __name__ == "__main__":
     unittest.main()

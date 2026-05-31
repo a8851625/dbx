@@ -251,7 +251,13 @@ class AuthorizationService:
             and policy.resource_key in {"*", datasource_id}
             and policy.enabled
             and (policy.permission_code is None or policy.permission_code == permission_code)
-            and self._matches_conditions(policy.conditions, database=database, schema=schema, table=table)
+            and self._matches_conditions(
+                policy.conditions,
+                database=database,
+                schema=schema,
+                table=table,
+                require_concrete_context=policy.effect == "deny",
+            )
         ]
         if not matching_policies:
             return AccessDecision(False, f"Datasource scope denied: {datasource_id}")
@@ -444,12 +450,17 @@ class AuthorizationService:
         database: str | None,
         schema: str | None,
         table: str | None,
+        require_concrete_context: bool = False,
     ) -> bool:
         allowed_databases = self._normalize_items(conditions.get("databases"))
+        if allowed_databases and database is None and require_concrete_context and "*" not in allowed_databases:
+            return False
         if database and allowed_databases and "*" not in allowed_databases and database not in allowed_databases:
             return False
 
         allowed_schemas = self._normalize_items(conditions.get("schemas"))
+        if allowed_schemas and schema is None and require_concrete_context and "*" not in allowed_schemas:
+            return False
         if schema and allowed_schemas:
             schema_candidates = {
                 schema,
@@ -459,6 +470,8 @@ class AuthorizationService:
                 return False
 
         allowed_tables = self._normalize_items(conditions.get("tables"))
+        if allowed_tables and table is None and require_concrete_context and "*" not in allowed_tables:
+            return False
         if table and allowed_tables:
             table_candidates = {table}
             if schema:

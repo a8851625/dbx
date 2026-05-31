@@ -29,8 +29,12 @@ export function supportsExplainPlan(databaseType?: DatabaseType): databaseType i
   return !!databaseType && SUPPORTED_EXPLAIN_TYPES.has(databaseType);
 }
 
-export function buildExplainSql(databaseType: DatabaseType | undefined, sql: string): Promise<BuildExplainSqlResult> {
-  return api.buildExplainSql({ databaseType, sql }) as Promise<BuildExplainSqlResult>;
+export function buildExplainSql(
+  databaseType: DatabaseType | undefined,
+  sql: string,
+  resource?: { connectionId?: string; database?: string; schema?: string },
+): Promise<BuildExplainSqlResult> {
+  return api.buildExplainSql({ databaseType, sql, ...resource }) as Promise<BuildExplainSqlResult>;
 }
 
 export function parseExplainResult(databaseType: "mysql" | "postgres", result: QueryResult): ParsedExplainPlan {
