@@ -760,6 +760,7 @@ export default {
     emptySelection: "Select a ticket on the left to inspect SQL, approval steps, and execution details.",
     loadFailed: "Failed to load approval data: {message}",
     actionFailed: "Approval action failed: {message}",
+    directExecutionBlocked: "DDL/DML must be submitted for approval. A ticket draft has been opened.",
     createdDraft: "Approval draft created",
     createdAndSubmitted: "Approval ticket submitted",
     submitted: "Approval ticket submitted",

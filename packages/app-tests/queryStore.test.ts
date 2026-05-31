@@ -94,6 +94,12 @@ test("evicting cached tab results releases multi-result payloads and sessions", 
         },
       );
     }
+    if (url === "/api/query/classify") {
+      return new Response(JSON.stringify({ requires_approval: false, statements: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     return new Response("unexpected request", { status: 500 });
   }) as typeof fetch;
 

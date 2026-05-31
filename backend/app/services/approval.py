@@ -21,40 +21,13 @@ from app.models.approval import (
 )
 from app.models.auth import UserIdentity
 from app.services.authorization import AccessContext, AuthorizationService
-
-DDL_KEYWORDS = {
-    "alter",
-    "comment",
-    "create",
-    "drop",
-    "grant",
-    "rename",
-    "revoke",
-    "truncate",
-}
-DML_KEYWORDS = {
-    "delete",
-    "insert",
-    "merge",
-    "replace",
-    "update",
-}
-HIGH_RISK_KEYWORDS = {
-    "delete",
-    "drop",
-    "replace",
-    "revoke",
-    "truncate",
-}
-
-
-@dataclass(frozen=True)
-class ClassifiedStatement:
-    order: int
-    text: str
-    statement_type: str
-    risk_level: str
-    risk_tags: list[str]
+from app.services.sql_classification import (
+    ClassifiedStatement,
+    classify_sql_statements,
+    resolve_ticket_risk,
+    resolve_ticket_type,
+    summarize_sql,
+)
 
 
 @dataclass(frozen=True)
@@ -72,93 +45,6 @@ class TicketBundle:
 class TicketTransitionResult:
     ticket: ChangeTicket
     should_queue_execution: bool = False
-
-
-class SqlStatementSplitter:
-    def __init__(self) -> None:
-        self.buffer = ""
-        self.in_single_quote = False
-        self.in_double_quote = False
-        self.in_backtick = False
-        self.in_line_comment = False
-        self.in_block_comment = False
-        self.previous: str | None = None
-
-    def push_chunk(self, chunk: str) -> list[str]:
-        statements: list[str] = []
-        chars = list(chunk)
-        index = 0
-        while index < len(chars):
-            char = chars[index]
-            nxt = chars[index + 1] if index + 1 < len(chars) else None
-
-            if self.in_line_comment:
-                self.buffer += char
-                if char == "\n":
-                    self.in_line_comment = False
-                self.previous = char
-                index += 1
-                continue
-
-            if self.in_block_comment:
-                self.buffer += char
-                if self.previous == "*" and char == "/":
-                    self.in_block_comment = False
-                self.previous = char
-                index += 1
-                continue
-
-            if not self.in_single_quote and not self.in_double_quote and not self.in_backtick:
-                if char == "-" and nxt == "-":
-                    self.buffer += char
-                    self.previous = char
-                    self.in_line_comment = True
-                    index += 1
-                    continue
-                if char == "/" and nxt == "*":
-                    self.buffer += char
-                    self.previous = char
-                    self.in_block_comment = True
-                    index += 1
-                    continue
-
-            self.buffer += char
-            if char == "'" and not self.in_double_quote and not self.in_backtick and self.previous != "\\":
-                self.in_single_quote = not self.in_single_quote
-            elif char == '"' and not self.in_single_quote and not self.in_backtick and self.previous != "\\":
-                self.in_double_quote = not self.in_double_quote
-            elif char == "`" and not self.in_single_quote and not self.in_double_quote and self.previous != "\\":
-                self.in_backtick = not self.in_backtick
-            elif (
-                char == ";"
-                and not self.in_single_quote
-                and not self.in_double_quote
-                and not self.in_backtick
-                and not self.in_line_comment
-                and not self.in_block_comment
-            ):
-                statement = self.buffer[:-1].strip()
-                self.buffer = ""
-                if statement:
-                    statements.append(statement)
-                self.previous = None
-                index += 1
-                continue
-
-            self.previous = char
-            index += 1
-        return statements
-
-    def finish(self) -> list[str]:
-        remaining = self.buffer.strip()
-        self.buffer = ""
-        self.previous = None
-        self.in_single_quote = False
-        self.in_double_quote = False
-        self.in_backtick = False
-        self.in_line_comment = False
-        self.in_block_comment = False
-        return [remaining] if remaining else []
 
 
 class ApprovalService:
@@ -344,15 +230,15 @@ class ApprovalService:
 
         ticket = ChangeTicket(
             ticket_no=self._build_ticket_number(),
-            ticket_type=self._resolve_ticket_type(classified_statements),
+            ticket_type=resolve_ticket_type(classified_statements),
             title=title.strip(),
             datasource_id=datasource_id.strip(),
             target_database=target_database.strip(),
             target_schema=target_schema.strip() if target_schema else None,
             target_table=target_table.strip() if target_table else None,
-            risk_level=self._resolve_ticket_risk(classified_statements),
+            risk_level=resolve_ticket_risk(classified_statements),
             sql_text=sql_text.strip(),
-            sql_summary=self._summarize_sql(classified_statements),
+            sql_summary=summarize_sql(classified_statements),
             submitter_id=current_user.id,
             scheduled_at=scheduled_at,
         )
@@ -660,45 +546,16 @@ class ApprovalService:
         return actions
 
     def classify_sql(self, sql_text: str) -> list[ClassifiedStatement]:
-        splitter = SqlStatementSplitter()
-        statements = splitter.push_chunk(sql_text)
-        statements.extend(splitter.finish())
-        if not statements:
+        try:
+            classified = classify_sql_statements(sql_text)
+        except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SQL payload is empty")
-
-        classified: list[ClassifiedStatement] = []
-        for index, statement in enumerate(statements, start=1):
-            keyword = self._leading_keyword(statement)
-            if keyword in DDL_KEYWORDS:
-                statement_type = "ddl"
-            elif keyword in DML_KEYWORDS:
-                statement_type = "dml"
-            else:
+        for statement in classified:
+            if statement.statement_type not in {"ddl", "dml"}:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Unsupported statement type in ticket: {keyword or 'unknown'}",
+                    detail=f"Unsupported statement type in ticket: {statement.keyword or 'unknown'}",
                 )
-
-            risk_tags: list[str] = []
-            risk_level = "medium"
-            if keyword in HIGH_RISK_KEYWORDS:
-                risk_tags.append("destructive")
-                risk_level = "high"
-            if "where" not in statement.lower() and keyword in {"delete", "update"}:
-                risk_tags.append("no_where_clause")
-                risk_level = "high"
-            if statement_type == "ddl":
-                risk_tags.append("structure_change")
-
-            classified.append(
-                ClassifiedStatement(
-                    order=index,
-                    text=statement.strip(),
-                    statement_type=statement_type,
-                    risk_level=risk_level,
-                    risk_tags=risk_tags,
-                )
-            )
         return classified
 
     def _ensure_scope_access(
@@ -802,29 +659,6 @@ class ApprovalService:
             created_steps.append(created)
         db.flush()
         return created_steps
-
-    def _resolve_ticket_type(self, statements: list[ClassifiedStatement]) -> str:
-        kinds = {statement.statement_type for statement in statements}
-        if len(kinds) == 1:
-            return next(iter(kinds))
-        return "mixed"
-
-    def _resolve_ticket_risk(self, statements: list[ClassifiedStatement]) -> str:
-        if any(statement.risk_level == "high" for statement in statements):
-            return "high"
-        if any(statement.statement_type == "ddl" for statement in statements):
-            return "medium"
-        return "low"
-
-    def _summarize_sql(self, statements: list[ClassifiedStatement]) -> str:
-        summary_parts = [f"{statement.statement_type.upper()}#{statement.order}" for statement in statements[:5]]
-        extra = "" if len(statements) <= 5 else f" +{len(statements) - 5} more"
-        return ", ".join(summary_parts) + extra
-
-    def _leading_keyword(self, statement: str) -> str:
-        normalized = statement.strip().lstrip("(")
-        pieces = normalized.split(None, 1)
-        return pieces[0].lower() if pieces else ""
 
     def _next_waiting_step(self, bundle: TicketBundle, current_step_no: int) -> ApprovalInstanceStep | None:
         for step in bundle.approval_steps:

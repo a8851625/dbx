@@ -1,6 +1,11 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { isDangerousSql, stripSqlComments } from "../../apps/desktop/src/composables/useSqlExecution.ts";
+import {
+  approvalDraftSqlFromClassification,
+  isDangerousSql,
+  requiresApprovalFromClassification,
+  stripSqlComments,
+} from "../../apps/desktop/src/composables/useSqlExecution.ts";
 
 test("stripSqlComments removes block comments", () => {
   assert.equal(stripSqlComments("SELECT /* drop */ 1").includes("drop"), false);
@@ -65,4 +70,88 @@ test("complex SELECT with joins and functions is not dangerous", () => {
       select xxx from m_alarm where alarm_time >= SUBDATE(now(), interval 3 minute)
     ) as xxxx on m_alarm.mid = m_alarm_tmp.mid`;
   assert.equal(isDangerousSql(sql), false);
+});
+
+test("query classification requires approval for DDL and DML statements", () => {
+  assert.equal(
+    requiresApprovalFromClassification({
+      requires_approval: true,
+      statements: [
+        {
+          order: 1,
+          statement_text: "ALTER TABLE users ADD COLUMN note text",
+          statement_type: "ddl",
+          keyword: "alter",
+          risk_level: "medium",
+          risk_tags: ["structure_change"],
+        },
+      ],
+    }),
+    true,
+  );
+});
+
+test("query classification does not require approval for read and metadata statements", () => {
+  assert.equal(
+    requiresApprovalFromClassification({
+      requires_approval: false,
+      statements: [
+        {
+          order: 1,
+          statement_text: "SELECT 1",
+          statement_type: "read",
+          keyword: "select",
+          risk_level: "low",
+          risk_tags: [],
+        },
+        {
+          order: 2,
+          statement_text: "EXPLAIN SELECT 1",
+          statement_type: "metadata",
+          keyword: "explain",
+          risk_level: "low",
+          risk_tags: [],
+        },
+      ],
+    }),
+    false,
+  );
+});
+
+test("approval draft uses only DDL and DML statements from mixed SQL", () => {
+  assert.equal(
+    approvalDraftSqlFromClassification(
+      {
+        requires_approval: true,
+        statements: [
+          {
+            order: 1,
+            statement_text: "SELECT 1",
+            statement_type: "read",
+            keyword: "select",
+            risk_level: "low",
+            risk_tags: [],
+          },
+          {
+            order: 2,
+            statement_text: "ALTER TABLE users ADD COLUMN note text",
+            statement_type: "ddl",
+            keyword: "alter",
+            risk_level: "medium",
+            risk_tags: ["structure_change"],
+          },
+          {
+            order: 3,
+            statement_text: "UPDATE users SET note = 'x' WHERE id = 1",
+            statement_type: "dml",
+            keyword: "update",
+            risk_level: "medium",
+            risk_tags: [],
+          },
+        ],
+      },
+      "SELECT 1; ALTER TABLE users ADD COLUMN note text; UPDATE users SET note = 'x' WHERE id = 1",
+    ),
+    "ALTER TABLE users ADD COLUMN note text;\nUPDATE users SET note = 'x' WHERE id = 1",
+  );
 });

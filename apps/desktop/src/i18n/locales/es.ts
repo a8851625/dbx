@@ -706,6 +706,7 @@ export default {
     emptySelection: "Selecciona un ticket a la izquierda para revisar el SQL, los pasos y la ejecución.",
     loadFailed: "Error al cargar datos de aprobación: {message}",
     actionFailed: "Falló la acción de aprobación: {message}",
+    directExecutionBlocked: "DDL/DML debe enviarse para aprobación. Se abrió un borrador de ticket.",
     createdDraft: "Borrador de aprobación creado",
     createdAndSubmitted: "Ticket de aprobación enviado",
     submitted: "Ticket de aprobación enviado",

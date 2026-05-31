@@ -8,6 +8,7 @@ from app.models.approval import ApprovalInstance, ApprovalInstanceStep, ChangeTi
 from app.models.auth import UserIdentity
 from app.services.approval import ApprovalService, TicketBundle
 from app.services.authorization import AccessContext
+from app.services.sql_classification import classify_sql_statements, contains_change_operation, split_sql_statements
 
 
 class FakeDB:
@@ -100,6 +101,35 @@ class ApprovalServiceTests(unittest.TestCase):
         self.assertIn("destructive", statements[1].risk_tags)
         self.assertIn("no_where_clause", statements[1].risk_tags)
         self.assertEqual(statements[1].risk_level, "high")
+
+    def test_shared_classifier_allows_read_and_metadata_statements(self) -> None:
+        statements = classify_sql_statements("SELECT REPLACE(name, 'delete', '') FROM users; EXPLAIN SELECT 1")
+
+        self.assertEqual([statement.statement_type for statement in statements], ["read", "metadata"])
+        self.assertFalse(any(statement.requires_approval for statement in statements))
+
+    def test_shared_classifier_marks_cte_and_explain_analyze_mutations(self) -> None:
+        statements = classify_sql_statements(
+            "WITH deleted AS (DELETE FROM users RETURNING *) SELECT * FROM deleted; EXPLAIN ANALYZE UPDATE users SET name = 'a' WHERE id = 1"
+        )
+
+        self.assertEqual([statement.statement_type for statement in statements], ["dml", "dml"])
+        self.assertTrue(all(statement.requires_approval for statement in statements))
+
+    def test_split_sql_keeps_semicolons_inside_strings_and_comments(self) -> None:
+        statements = split_sql_statements("SELECT 'a;b'; -- comment;\nUPDATE users SET name = 'c;d' WHERE id = 1;")
+
+        self.assertEqual(statements, ["SELECT 'a;b'", "-- comment;\nUPDATE users SET name = 'c;d' WHERE id = 1"])
+
+    def test_contains_change_operation_ignores_literals_and_comments(self) -> None:
+        self.assertFalse(contains_change_operation("SELECT 'DROP TABLE t' /* UPDATE x */"))
+        self.assertTrue(contains_change_operation("WITH x AS (UPDATE t SET c = 1 RETURNING *) SELECT * FROM x"))
+
+    def test_shared_classifier_marks_batch_statement_mutations_only(self) -> None:
+        statements = classify_sql_statements("SELECT 1;\nUPDATE users SET name = 'a' WHERE id = 1")
+
+        self.assertEqual([statement.statement_type for statement in statements], ["read", "dml"])
+        self.assertEqual([statement.text for statement in statements if statement.requires_approval], ["UPDATE users SET name = 'a' WHERE id = 1"])
 
     def test_approve_ticket_advances_to_next_step_without_queueing(self) -> None:
         ticket = make_ticket()

@@ -11,6 +11,12 @@ from app.db.session import get_db
 from app.models.auth import UserIdentity
 from app.services.query_runtime import QueryRuntimeService
 from app.services.runtime_state import RuntimeStateService
+from app.services.sql_classification import (
+    ClassifiedStatement,
+    classify_sql_statements,
+    resolve_ticket_type,
+    summarize_sql,
+)
 
 router = APIRouter()
 runtime_state_service = RuntimeStateService()
@@ -35,6 +41,83 @@ def _runtime_error_to_http(exc: Exception) -> HTTPException:
     if "not supported" in message.lower():
         return HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=message)
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+
+
+def _statement_payload(statement: ClassifiedStatement) -> dict[str, Any]:
+    return {
+        "order": statement.order,
+        "statement_text": statement.text,
+        "statement_type": statement.statement_type,
+        "keyword": statement.keyword,
+        "risk_level": statement.risk_level,
+        "risk_tags": statement.risk_tags,
+    }
+
+
+def _approval_required_error(
+    *,
+    connection_id: str,
+    database: str,
+    schema: str | None,
+    sql: str,
+    statements: list[ClassifiedStatement],
+) -> HTTPException:
+    change_statements = [statement for statement in statements if statement.requires_approval]
+    ticket_type = resolve_ticket_type(change_statements)
+    ticket_sql = ";\n".join(statement.text for statement in change_statements)
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "code": "DDL_DML_APPROVAL_REQUIRED",
+            "message": "DDL/DML statements must be submitted as approval tickets before execution.",
+            "ticket_draft": {
+                "title": "SQL change request",
+                "datasource_id": connection_id,
+                "target_database": database,
+                "target_schema": schema,
+                "target_table": None,
+                "sql_text": ticket_sql.strip() or sql.strip(),
+                "scheduled_at": None,
+            },
+            "statement_count": len(statements),
+            "ticket_type": ticket_type,
+            "sql_summary": summarize_sql(change_statements),
+            "statements": [_statement_payload(statement) for statement in statements],
+        },
+    )
+
+
+def _ensure_direct_query_allowed(
+    *,
+    connection_id: str,
+    database: str,
+    schema: str | None,
+    sql: str,
+    statements: list[str] | None = None,
+) -> None:
+    sql_text = ";\n".join(str(statement) for statement in statements or []) if statements is not None else sql
+    try:
+        classified = classify_sql_statements(sql_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SQL payload is empty") from exc
+    if any(statement.requires_approval for statement in classified):
+        raise _approval_required_error(
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=sql_text,
+            statements=classified,
+        )
+
+
+def _payload_context(payload: dict[str, Any]) -> tuple[str, str, str | None]:
+    return str(payload.get("connectionId") or ""), str(payload.get("database") or ""), payload.get("schema")
+
+
+def _payload_sql(payload: dict[str, Any]) -> tuple[str, list[str] | None]:
+    if "statements" in payload:
+        return "", list(payload.get("statements") or [])
+    return str(payload.get("sql") or ""), None
 
 
 @router.get("/version")
@@ -493,13 +576,18 @@ def execute_query(
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    config = _connection_or_400(db, str(payload.get("connectionId") or ""), current_user.id)
+    connection_id = str(payload.get("connectionId") or "")
+    database = str(payload.get("database") or "")
+    schema = payload.get("schema")
+    sql = str(payload.get("sql") or "")
+    _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
+    config = _connection_or_400(db, connection_id, current_user.id)
     try:
         return query_runtime_service.execute_query(
             config,
-            database=str(payload.get("database") or ""),
-            schema=payload.get("schema"),
-            sql=str(payload.get("sql") or ""),
+            database=database,
+            schema=schema,
+            sql=sql,
             max_rows=payload.get("maxRows"),
         )
     except Exception as exc:
@@ -512,13 +600,18 @@ def execute_multi(
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    config = _connection_or_400(db, str(payload.get("connectionId") or ""), current_user.id)
+    connection_id = str(payload.get("connectionId") or "")
+    database = str(payload.get("database") or "")
+    schema = payload.get("schema")
+    sql = str(payload.get("sql") or "")
+    _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
+    config = _connection_or_400(db, connection_id, current_user.id)
     try:
         return query_runtime_service.execute_multi(
             config,
-            database=str(payload.get("database") or ""),
-            schema=payload.get("schema"),
-            sql=str(payload.get("sql") or ""),
+            database=database,
+            schema=schema,
+            sql=sql,
             max_rows=payload.get("maxRows"),
         )
     except Exception as exc:
@@ -531,13 +624,24 @@ def execute_batch(
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    config = _connection_or_400(db, str(payload.get("connectionId") or ""), current_user.id)
+    connection_id = str(payload.get("connectionId") or "")
+    database = str(payload.get("database") or "")
+    schema = payload.get("schema")
+    statements = list(payload.get("statements") or [])
+    _ensure_direct_query_allowed(
+        connection_id=connection_id,
+        database=database,
+        schema=schema,
+        sql="",
+        statements=statements,
+    )
+    config = _connection_or_400(db, connection_id, current_user.id)
     try:
         return query_runtime_service.execute_batch(
             config,
-            database=str(payload.get("database") or ""),
-            schema=payload.get("schema"),
-            statements=list(payload.get("statements") or []),
+            database=database,
+            schema=schema,
+            statements=statements,
             transactional=False,
         )
     except Exception as exc:
@@ -550,13 +654,18 @@ def execute_script(
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    config = _connection_or_400(db, str(payload.get("connectionId") or ""), current_user.id)
+    connection_id = str(payload.get("connectionId") or "")
+    database = str(payload.get("database") or "")
+    schema = payload.get("schema")
+    sql = str(payload.get("sql") or "")
+    _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
+    config = _connection_or_400(db, connection_id, current_user.id)
     try:
-        statements = query_runtime_service.split_sql(str(payload.get("sql") or ""))
+        statements = query_runtime_service.split_sql(sql)
         return query_runtime_service.execute_batch(
             config,
-            database=str(payload.get("database") or ""),
-            schema=payload.get("schema"),
+            database=database,
+            schema=schema,
             statements=statements,
             transactional=False,
         )
@@ -570,17 +679,68 @@ def execute_in_transaction(
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    config = _connection_or_400(db, str(payload.get("connectionId") or ""), current_user.id)
+    connection_id = str(payload.get("connectionId") or "")
+    database = str(payload.get("database") or "")
+    schema = payload.get("schema")
+    statements = list(payload.get("statements") or [])
+    _ensure_direct_query_allowed(
+        connection_id=connection_id,
+        database=database,
+        schema=schema,
+        sql="",
+        statements=statements,
+    )
+    config = _connection_or_400(db, connection_id, current_user.id)
     try:
         return query_runtime_service.execute_batch(
             config,
-            database=str(payload.get("database") or ""),
-            schema=payload.get("schema"),
-            statements=list(payload.get("statements") or []),
+            database=database,
+            schema=schema,
+            statements=statements,
             transactional=True,
         )
     except Exception as exc:
         raise _runtime_error_to_http(exc) from exc
+
+
+@router.post("/query/classify")
+def classify_query(
+    payload: dict[str, Any],
+    __: UserIdentity = Depends(require_permission("query.execute")),
+) -> dict[str, Any]:
+    try:
+        statements = classify_sql_statements(str(payload.get("sql") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SQL payload is empty") from exc
+    change_statements = [statement for statement in statements if statement.requires_approval]
+    return {
+        "requires_approval": bool(change_statements),
+        "ticket_type": resolve_ticket_type(change_statements) if change_statements else None,
+        "sql_summary": summarize_sql(change_statements) if change_statements else summarize_sql(statements),
+        "statements": [_statement_payload(statement) for statement in statements],
+    }
+
+
+@router.post("/query/classify-execution")
+def classify_execution_query(
+    payload: dict[str, Any],
+    __: UserIdentity = Depends(require_permission("query.execute")),
+) -> dict[str, Any]:
+    connection_id, database, schema = _payload_context(payload)
+    sql, statements = _payload_sql(payload)
+    try:
+        _ensure_direct_query_allowed(
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql=sql,
+            statements=statements,
+        )
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_409_CONFLICT and isinstance(exc.detail, dict):
+            return {"allowed": False, **exc.detail}
+        raise
+    return {"allowed": True}
 
 
 @router.post("/internal/query/execute-in-transaction", dependencies=[Depends(_internal_token_guard)])

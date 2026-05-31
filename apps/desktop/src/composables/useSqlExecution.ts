@@ -4,6 +4,7 @@ import { useQueryStore } from "@/stores/queryStore";
 import { useHistoryStore } from "@/stores/historyStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useToast } from "@/composables/useToast";
+import * as api from "@/lib/api";
 import { classifySqlActivityKind } from "@/lib/historyActivityKind";
 import { sqlMetadataRefreshTarget } from "@/lib/sqlMetadataRefresh";
 import type { ConnectionConfig, QueryTab } from "@/types/database";
@@ -22,6 +23,30 @@ export function isDangerousSql(sql: string): boolean {
   return cleaned.split(";").some((stmt) => DANGER_RE.test(stmt));
 }
 
+export function requiresApprovalFromClassification(classification: api.QueryClassificationResponse): boolean {
+  return (
+    classification.requires_approval ||
+    classification.statements.some((statement) => {
+      const type = String(statement.statement_type || "").toLowerCase();
+      return type === "ddl" || type === "dml";
+    })
+  );
+}
+
+export function approvalDraftSqlFromClassification(
+  classification: api.QueryClassificationResponse,
+  fallbackSql: string,
+): string {
+  const changeStatements = classification.statements
+    .filter((statement) => {
+      const type = String(statement.statement_type || "").toLowerCase();
+      return type === "ddl" || type === "dml";
+    })
+    .map((statement) => statement.statement_text.trim())
+    .filter(Boolean);
+  return changeStatements.length ? changeStatements.join(";\n") : fallbackSql;
+}
+
 function primarySqlOperation(sql: string): string {
   const cleaned = stripSqlComments(sql);
   const statement = cleaned
@@ -36,6 +61,13 @@ export function useSqlExecution(deps: {
   activeConnection: ComputedRef<ConnectionConfig | undefined>;
   executableSql: ComputedRef<string>;
   resolveExecutableSql?: () => Promise<string>;
+  openApprovalDraft?: (draft: {
+    sql: string;
+    connectionId: string;
+    database: string;
+    schema?: string;
+    title?: string;
+  }) => void;
   activeOutputView: Ref<"result" | "explain" | "chart">;
 }) {
   const { t } = useI18n();
@@ -52,10 +84,32 @@ export function useSqlExecution(deps: {
     return deps.resolveExecutableSql ? await deps.resolveExecutableSql() : deps.executableSql.value;
   }
 
+  async function redirectToApprovalIfRequired(tab: QueryTab, sql: string): Promise<boolean> {
+    let classification: api.QueryClassificationResponse | undefined;
+    try {
+      classification = await api.classifyQuery(sql);
+    } catch {
+      // If the classifier is unavailable, the backend execution gate remains authoritative.
+    }
+    if (classification && requiresApprovalFromClassification(classification)) {
+      deps.openApprovalDraft?.({
+        sql: approvalDraftSqlFromClassification(classification, sql),
+        connectionId: tab.connectionId,
+        database: tab.database,
+        schema: tab.schema,
+        title: tab.title,
+      });
+      toast(t("approval.directExecutionBlocked"), 5000);
+      return true;
+    }
+    return false;
+  }
+
   async function tryExecute(sqlOverride?: string) {
     const tab = deps.activeTab.value;
     const sql = sqlOverride ?? (await resolvedExecutableSql());
     if (!tab || !sql.trim()) return;
+    if (await redirectToApprovalIfRequired(tab, sql)) return;
     if (isDangerousSql(sql)) {
       dangerSql.value = sql;
       pendingDangerSql.value = sql;
@@ -69,6 +123,7 @@ export function useSqlExecution(deps: {
     sql ??= await resolvedExecutableSql();
     const tab = deps.activeTab.value;
     if (!tab || !sql.trim()) return;
+    if (await redirectToApprovalIfRequired(tab, sql)) return;
     deps.activeOutputView.value = "result";
     const connName = connectionStore.getConfig(tab.connectionId)?.name || "";
     const start = Date.now();
@@ -132,6 +187,7 @@ export function useSqlExecution(deps: {
   async function onDangerConfirm() {
     const sql = pendingDangerSql.value || (await resolvedExecutableSql());
     pendingDangerSql.value = "";
+    showDangerDialog.value = false;
     await doExecute(sql);
   }
 

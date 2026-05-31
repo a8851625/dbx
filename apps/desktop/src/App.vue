@@ -110,6 +110,14 @@ const agentDriverUpdateCount = ref(0);
 const showHistory = ref(false);
 const showApprovalCenter = ref(false);
 const showAuditCenter = ref(false);
+const approvalDraftVersion = ref(0);
+const approvalDraft = ref<{
+  connectionId: string;
+  database: string;
+  schema?: string;
+  sql: string;
+  title?: string;
+} | null>(null);
 const showAiPanel = ref(localStorage.getItem("dbx-ai-panel-open") === "true");
 const aiPanelReady = ref(false);
 const { sidebarWidth, aiPanelWidth, historyWidth, startSidebarResize, startAiPanelResize, startHistoryResize } =
@@ -197,6 +205,7 @@ const {
   activeConnection,
   executableSql,
   resolveExecutableSql: resolveActiveExecutableSql,
+  openApprovalDraft,
   activeOutputView,
 });
 
@@ -246,6 +255,7 @@ const canViewHistory = computed(() => hasPermission("history.view"));
 const canViewApproval = computed(
   () => hasPermission("approval.ticket.view") || hasPermission("approval.ticket.create"),
 );
+const canCreateApprovalTicket = computed(() => hasPermission("approval.ticket.create"));
 const canViewAudit = computed(() => hasPermission("audit.event.view"));
 const canUseAi = computed(() => isDesktop && hasPermission("ai.use"));
 const canManageSettings = computed(() => hasPermission("settings.manage"));
@@ -296,6 +306,7 @@ watch(canViewHistory, (allowed) => {
 watch(canViewApproval, (allowed) => {
   if (!allowed) {
     showApprovalCenter.value = false;
+    approvalDraft.value = null;
   }
 });
 
@@ -342,6 +353,18 @@ function openApprovalCenter() {
     permissionDenied();
     return;
   }
+  approvalDraft.value = null;
+  approvalDraftVersion.value++;
+  showApprovalCenter.value = true;
+}
+
+function openApprovalDraft(draft: NonNullable<typeof approvalDraft.value>) {
+  if (!canCreateApprovalTicket.value) {
+    permissionDenied();
+    return;
+  }
+  approvalDraft.value = draft;
+  approvalDraftVersion.value++;
   showApprovalCenter.value = true;
 }
 
@@ -1146,14 +1169,17 @@ onUnmounted(() => {
         />
         <ApprovalCenterSheet
           v-if="showApprovalCenter"
+          :key="approvalDraftVersion"
           v-model:open="showApprovalCenter"
           :connections="connectionStore.connections"
-          :draft-connection-id="activeTab?.connectionId || connectionStore.activeConnectionId || ''"
-          :draft-database="activeTab?.database || ''"
-          :draft-schema="activeTab?.schema || ''"
-          :draft-sql="activeTab?.mode === 'query' ? selectedSql.trim() || activeTab.sql : ''"
-          :draft-title="activeTab?.title || ''"
-          :can-create="hasPermission('approval.ticket.create')"
+          :draft-connection-id="
+            approvalDraft?.connectionId || activeTab?.connectionId || connectionStore.activeConnectionId || ''
+          "
+          :draft-database="approvalDraft?.database || activeTab?.database || ''"
+          :draft-schema="approvalDraft?.schema || activeTab?.schema || ''"
+          :draft-sql="approvalDraft?.sql || (activeTab?.mode === 'query' ? selectedSql.trim() || activeTab.sql : '')"
+          :draft-title="approvalDraft?.title || activeTab?.title || ''"
+          :can-create="canCreateApprovalTicket"
           :can-view-all="isApprovalAdmin"
           :can-manage-flows="hasPermission('approval.flow.manage')"
         />

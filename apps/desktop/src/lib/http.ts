@@ -272,6 +272,42 @@ export interface CreateApprovalTicketPayload {
   scheduled_at?: string | null;
 }
 
+export interface SqlStatementClassification {
+  order: number;
+  statement_text: string;
+  statement_type: "ddl" | "dml" | "read" | "metadata" | "control" | "other" | string;
+  keyword: string;
+  risk_level: "low" | "medium" | "high" | string;
+  risk_tags: string[];
+}
+
+export interface ApprovalTicketDraftPayload {
+  title: string;
+  datasource_id: string;
+  target_database: string;
+  target_schema?: string | null;
+  target_table?: string | null;
+  sql_text: string;
+  scheduled_at?: string | null;
+}
+
+export interface QueryClassificationResponse {
+  requires_approval: boolean;
+  ticket_type?: string | null;
+  sql_summary?: string | null;
+  statements: SqlStatementClassification[];
+}
+
+export interface ApprovalRequiredDetail {
+  code: "DDL_DML_APPROVAL_REQUIRED";
+  message: string;
+  ticket_draft: ApprovalTicketDraftPayload;
+  statement_count: number;
+  ticket_type: string;
+  sql_summary: string;
+  statements: SqlStatementClassification[];
+}
+
 export interface AuditEventRecord {
   id: string;
   event_type: string;
@@ -359,25 +395,67 @@ export interface ListQueryAuditsOptions {
 // Helpers
 // ---------------------------------------------------------------------------
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly detail: unknown;
+
+  constructor(message: string, status: number, detail: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+export function isApprovalRequiredError(error: unknown): error is ApiError & { detail: ApprovalRequiredDetail } {
+  const detail = error instanceof ApiError ? error.detail : undefined;
+  return Boolean(
+    detail &&
+    typeof detail === "object" &&
+    "code" in detail &&
+    (detail as { code?: unknown }).code === "DDL_DML_APPROVAL_REQUIRED",
+  );
+}
+
+async function throwHttpError(res: Response): Promise<never> {
+  const text = await res.text();
+  let detail: unknown = text;
+  let message = text || `HTTP ${res.status}`;
+  if (text) {
+    try {
+      const parsed = JSON.parse(text);
+      detail = parsed?.detail ?? parsed;
+      if (typeof detail === "string") {
+        message = detail;
+      } else if (detail && typeof detail === "object" && "message" in detail) {
+        message = String((detail as { message?: unknown }).message || message);
+      }
+    } catch {
+      /* keep raw response text */
+    }
+  }
+  throw new ApiError(message, res.status, detail);
+}
+
 async function post<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) return throwHttpError(res);
   return res.json();
 }
 
 async function get<T>(url: string): Promise<T> {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) return throwHttpError(res);
   return res.json();
 }
 
 async function del<T>(url: string): Promise<T> {
   const res = await fetch(url, { method: "DELETE" });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) return throwHttpError(res);
   return res.json();
 }
 
@@ -801,6 +879,10 @@ export async function executeInTransaction(
   schema?: string,
 ): Promise<QueryResult> {
   return post("/api/query/execute-in-transaction", { connectionId, database, statements, schema });
+}
+
+export async function classifyQuery(sql: string): Promise<QueryClassificationResponse> {
+  return post("/api/query/classify", { sql });
 }
 
 export async function cancelQuery(executionId: string): Promise<boolean> {

@@ -743,6 +743,7 @@ export default {
     emptySelection: "从左侧选择工单，可查看 SQL、审批步骤和执行详情。",
     loadFailed: "加载审批数据失败：{message}",
     actionFailed: "审批操作失败：{message}",
+    directExecutionBlocked: "DDL/DML 必须先提交审批，已为你打开工单草稿。",
     createdDraft: "审批草稿已创建",
     createdAndSubmitted: "审批工单已提交",
     submitted: "审批工单已提交",

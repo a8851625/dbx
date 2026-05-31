@@ -8,10 +8,7 @@ async function invoke<T>(_command: string, _payload?: unknown): Promise<T> {
   throw desktopRuntimeRemoved();
 }
 
-async function listen<T>(
-  _event: string,
-  _handler: (event: { payload: T }) => void,
-): Promise<UnlistenFn> {
+async function listen<T>(_event: string, _handler: (event: { payload: T }) => void): Promise<UnlistenFn> {
   throw desktopRuntimeRemoved();
 }
 import type {
@@ -243,17 +240,44 @@ export interface ApprovalFlowStepRecord {
   rule: Record<string, unknown>;
 }
 
+export interface ApprovalFlowMatchRule {
+  ticket_types?: string[];
+  datasource_ids?: string[];
+  databases?: string[];
+  schemas?: string[];
+  tables?: string[];
+  risk_levels?: string[];
+}
+
 export interface ApprovalFlowRecord {
   id: string;
   code: string;
   name: string;
   description?: string | null;
   ticket_type: string;
-  match_rule: Record<string, unknown>;
+  match_rule: ApprovalFlowMatchRule;
   enabled: boolean;
   built_in: boolean;
   version: number;
   steps: ApprovalFlowStepRecord[];
+}
+
+export interface ApprovalFlowStepPayload {
+  step_name: string;
+  approval_mode: "any_one" | "all";
+  approver_type: "role" | "user";
+  approver_ref: string;
+  rule?: Record<string, unknown>;
+}
+
+export interface ApprovalFlowPayload {
+  code: string;
+  name: string;
+  description?: string | null;
+  ticket_type: string;
+  match_rule: ApprovalFlowMatchRule;
+  enabled: boolean;
+  steps: ApprovalFlowStepPayload[];
 }
 
 export interface CreateApprovalTicketPayload {
@@ -264,6 +288,53 @@ export interface CreateApprovalTicketPayload {
   target_table?: string | null;
   sql_text: string;
   scheduled_at?: string | null;
+}
+
+export interface SqlStatementClassification {
+  order: number;
+  statement_text: string;
+  statement_type: "ddl" | "dml" | "read" | "metadata" | "control" | "other" | string;
+  keyword: string;
+  risk_level: "low" | "medium" | "high" | string;
+  risk_tags: string[];
+}
+
+export interface QueryClassificationResponse {
+  requires_approval: boolean;
+  ticket_type?: string | null;
+  sql_summary?: string | null;
+  statements: SqlStatementClassification[];
+}
+
+export interface ApprovalTicketDraftPayload {
+  title: string;
+  datasource_id: string;
+  target_database: string;
+  target_schema?: string | null;
+  target_table?: string | null;
+  sql_text: string;
+  scheduled_at?: string | null;
+}
+
+export interface ApprovalRequiredDetail {
+  code: "DDL_DML_APPROVAL_REQUIRED";
+  message: string;
+  ticket_draft: ApprovalTicketDraftPayload;
+  statement_count: number;
+  ticket_type: string;
+  sql_summary: string;
+  statements: SqlStatementClassification[];
+}
+
+export function isApprovalRequiredError(error: unknown): error is Error & { detail: ApprovalRequiredDetail } {
+  const detail =
+    error && typeof error === "object" && "detail" in error ? (error as { detail?: unknown }).detail : undefined;
+  return Boolean(
+    detail &&
+    typeof detail === "object" &&
+    "code" in detail &&
+    (detail as { code?: unknown }).code === "DDL_DML_APPROVAL_REQUIRED",
+  );
 }
 
 export interface QueryPagination {
@@ -418,6 +489,18 @@ export async function getEnterpriseAccessContext(): Promise<EnterpriseAccessCont
 }
 
 export async function listApprovalFlows(): Promise<ApprovalFlowRecord[]> {
+  throw new Error("Approval flow APIs are only available in web mode");
+}
+
+export async function createApprovalFlow(_payload: ApprovalFlowPayload): Promise<ApprovalFlowRecord> {
+  throw new Error("Approval flow APIs are only available in web mode");
+}
+
+export async function updateApprovalFlow(_flowId: string, _payload: ApprovalFlowPayload): Promise<ApprovalFlowRecord> {
+  throw new Error("Approval flow APIs are only available in web mode");
+}
+
+export async function deleteApprovalFlow(_flowId: string): Promise<void> {
   throw new Error("Approval flow APIs are only available in web mode");
 }
 
@@ -635,6 +718,10 @@ export async function executeInTransaction(
   schema?: string,
 ): Promise<QueryResult> {
   return invoke("execute_in_transaction", { connectionId, database, statements, schema });
+}
+
+export async function classifyQuery(_sql: string): Promise<QueryClassificationResponse> {
+  throw new Error("Query classification API is only available in web mode");
 }
 
 export async function analyzeSqlReferences(sql: string, dialect?: string): Promise<SqlReferenceAnalysis> {
