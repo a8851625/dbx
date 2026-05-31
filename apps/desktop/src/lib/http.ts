@@ -320,6 +320,8 @@ export interface AuditEventRecord {
   actor_role?: string | null;
   source_ip?: string | null;
   user_agent?: string | null;
+  request_id?: string | null;
+  trace_id?: string | null;
   request_path?: string | null;
   request_method?: string | null;
   resource_type?: string | null;
@@ -338,6 +340,8 @@ export interface QueryAuditRecord {
   actor_role?: string | null;
   source_ip?: string | null;
   user_agent?: string | null;
+  request_id?: string | null;
+  trace_id?: string | null;
   request_path?: string | null;
   request_method?: string | null;
   datasource_id: string;
@@ -377,6 +381,8 @@ export interface ListAuditEventsOptions {
   outcome?: string;
   actor?: string;
   resourceType?: string;
+  requestId?: string;
+  traceId?: string;
   keyword?: string;
 }
 
@@ -388,6 +394,8 @@ export interface ListQueryAuditsOptions {
   status?: string;
   operationType?: string;
   actor?: string;
+  requestId?: string;
+  traceId?: string;
   keyword?: string;
 }
 
@@ -558,6 +566,8 @@ export async function listAuditEvents(options: ListAuditEventsOptions = {}): Pro
     outcome: options.outcome,
     actor: options.actor,
     resource_type: options.resourceType,
+    request_id: options.requestId,
+    trace_id: options.traceId,
     keyword: options.keyword,
   });
   return get(query ? `/api/v1/audit/events?${query}` : "/api/v1/audit/events");
@@ -572,6 +582,8 @@ export async function listQueryAudits(options: ListQueryAuditsOptions = {}): Pro
     status: options.status,
     operation_type: options.operationType,
     actor: options.actor,
+    request_id: options.requestId,
+    trace_id: options.traceId,
     keyword: options.keyword,
   });
   return get(query ? `/api/v1/audit/queries?${query}` : "/api/v1/audit/queries");

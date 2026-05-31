@@ -52,10 +52,32 @@ def login(
     audit_service: AuditService = Depends(get_audit_service),
 ) -> AuthRedirectResponse:
     if not auth_service.is_auth_enabled():
+        audit_service.record_event(
+            db,
+            event_type="auth.login.redirect_failed",
+            category="auth",
+            action="login",
+            outcome="failure",
+            actor=audit_service.build_actor(request=request),
+            resource_type="identity_provider",
+            payload={"reason": "OIDC is not configured"},
+            commit=True,
+        )
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="OIDC is not configured")
 
     provider = auth_service.sync_default_provider(db)
     if provider is None:
+        audit_service.record_event(
+            db,
+            event_type="auth.login.redirect_failed",
+            category="auth",
+            action="login",
+            outcome="failure",
+            actor=audit_service.build_actor(request=request),
+            resource_type="identity_provider",
+            payload={"reason": "Identity provider is unavailable"},
+            commit=True,
+        )
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Identity provider is unavailable")
 
     context = auth_service.create_authorization_request(db, provider)
@@ -85,11 +107,38 @@ async def callback(
 ) -> Response:
     provider = auth_service.sync_default_provider(db)
     if provider is None:
+        audit_service.record_event(
+            db,
+            event_type="auth.login.failed",
+            category="auth",
+            action="login",
+            outcome="failure",
+            actor=audit_service.build_actor(request=request),
+            resource_type="identity_provider",
+            payload={"state": state, "reason": "Identity provider is unavailable"},
+            commit=True,
+        )
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Identity provider is unavailable")
 
-    auth_request = auth_service.consume_authorization_request(db, state)
-    claims = await auth_service.exchange_code_for_claims(code)
-    auth_service.validate_claims(claims)
+    try:
+        auth_request = auth_service.consume_authorization_request(db, state)
+        claims = await auth_service.exchange_code_for_claims(code)
+        auth_service.validate_claims(claims)
+    except Exception as exc:
+        audit_service.record_event(
+            db,
+            event_type="auth.login.failed",
+            category="auth",
+            action="login",
+            outcome="failure",
+            actor=audit_service.build_actor(request=request),
+            resource_type="identity_provider",
+            resource_id=provider.id,
+            resource_name=provider.name,
+            payload={"state": state, "error": str(exc)},
+            commit=True,
+        )
+        raise
     user = auth_service.upsert_user(db, provider, claims)
     session = auth_service.create_session(
         db,

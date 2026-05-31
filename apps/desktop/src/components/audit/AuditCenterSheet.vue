@@ -30,14 +30,23 @@ const error = ref("");
 const eventFilters = reactive({
   keyword: "",
   category: "",
+  action: "",
   outcome: "",
+  actor: "",
+  resourceType: "",
+  requestId: "",
+  traceId: "",
 });
 
 const queryFilters = reactive({
   keyword: "",
   datasourceId: "",
+  databaseName: "",
   status: "",
   operationType: "",
+  actor: "",
+  requestId: "",
+  traceId: "",
 });
 
 const events = ref<AuditEventRecord[]>([]);
@@ -74,7 +83,12 @@ async function loadActiveTab() {
         limit: 80,
         keyword: eventFilters.keyword.trim() || undefined,
         category: eventFilters.category && eventFilters.category !== "all" ? eventFilters.category : undefined,
+        action: eventFilters.action.trim() || undefined,
         outcome: eventFilters.outcome && eventFilters.outcome !== "all" ? eventFilters.outcome : undefined,
+        actor: eventFilters.actor.trim() || undefined,
+        resourceType: eventFilters.resourceType.trim() || undefined,
+        requestId: eventFilters.requestId.trim() || undefined,
+        traceId: eventFilters.traceId.trim() || undefined,
       });
       events.value = response.items;
       eventTotal.value = response.total;
@@ -86,9 +100,13 @@ async function loadActiveTab() {
       limit: 80,
       keyword: queryFilters.keyword.trim() || undefined,
       datasourceId: queryFilters.datasourceId.trim() || undefined,
+      databaseName: queryFilters.databaseName.trim() || undefined,
       status: queryFilters.status && queryFilters.status !== "all" ? queryFilters.status : undefined,
       operationType:
         queryFilters.operationType && queryFilters.operationType !== "all" ? queryFilters.operationType : undefined,
+      actor: queryFilters.actor.trim() || undefined,
+      requestId: queryFilters.requestId.trim() || undefined,
+      traceId: queryFilters.traceId.trim() || undefined,
     });
     queries.value = response.items;
     queryTotal.value = response.total;
@@ -172,8 +190,11 @@ function prettyJson(value: unknown) {
                       <SelectItem value="all">{{ t("audit.allCategories") }}</SelectItem>
                       <SelectItem value="auth">auth</SelectItem>
                       <SelectItem value="access">access</SelectItem>
+                      <SelectItem value="connection">connection</SelectItem>
+                      <SelectItem value="config">config</SelectItem>
                       <SelectItem value="approval">approval</SelectItem>
                       <SelectItem value="execution">execution</SelectItem>
+                      <SelectItem value="query">query</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -189,11 +210,58 @@ function prettyJson(value: unknown) {
                   </Select>
                 </div>
               </div>
-              <div class="mt-3">
-                <Button size="sm" class="gap-1.5" @click="loadActiveTab">
-                  <Search class="h-3.5 w-3.5" />
-                  {{ t("audit.search") }}
-                </Button>
+              <div class="mt-3 grid gap-3 md:grid-cols-4">
+                <div class="space-y-1.5">
+                  <Label for="audit-event-actor">{{ t("audit.actor") }}</Label>
+                  <Input
+                    id="audit-event-actor"
+                    v-model="eventFilters.actor"
+                    :placeholder="t('audit.actorPlaceholder')"
+                    @keydown.enter.prevent="loadActiveTab"
+                  />
+                </div>
+                <div class="space-y-1.5">
+                  <Label for="audit-event-action">{{ t("audit.action") }}</Label>
+                  <Input
+                    id="audit-event-action"
+                    v-model="eventFilters.action"
+                    placeholder="create / update / delete"
+                    @keydown.enter.prevent="loadActiveTab"
+                  />
+                </div>
+                <div class="space-y-1.5">
+                  <Label for="audit-event-resource-type">{{ t("audit.resourceType") }}</Label>
+                  <Input
+                    id="audit-event-resource-type"
+                    v-model="eventFilters.resourceType"
+                    placeholder="api / approval / permission"
+                    @keydown.enter.prevent="loadActiveTab"
+                  />
+                </div>
+                <div class="space-y-1.5">
+                  <Label for="audit-event-request-id">{{ t("audit.requestId") }}</Label>
+                  <Input
+                    id="audit-event-request-id"
+                    v-model="eventFilters.requestId"
+                    :placeholder="t('audit.requestIdPlaceholder')"
+                    @keydown.enter.prevent="loadActiveTab"
+                  />
+                </div>
+                <div class="space-y-1.5 md:col-span-2">
+                  <Label for="audit-event-trace-id">{{ t("audit.traceId") }}</Label>
+                  <Input
+                    id="audit-event-trace-id"
+                    v-model="eventFilters.traceId"
+                    :placeholder="t('audit.traceIdPlaceholder')"
+                    @keydown.enter.prevent="loadActiveTab"
+                  />
+                </div>
+                <div class="flex items-end">
+                  <Button size="sm" class="gap-1.5" @click="loadActiveTab">
+                    <Search class="h-3.5 w-3.5" />
+                    {{ t("audit.search") }}
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -221,7 +289,9 @@ function prettyJson(value: unknown) {
                     <div class="text-xs text-muted-foreground">
                       {{ item.actor_email || item.actor_display_name || t("audit.systemActor") }}
                     </div>
-                    <div class="text-xs text-muted-foreground">{{ item.resource_name || item.resource_type || "-" }}</div>
+                    <div class="text-xs text-muted-foreground">
+                      {{ item.resource_name || item.resource_type || "-" }}
+                    </div>
                   </button>
                 </ScrollArea>
               </div>
@@ -253,7 +323,8 @@ function prettyJson(value: unknown) {
                       <div>
                         <div class="text-xs text-muted-foreground">{{ t("audit.resource") }}</div>
                         <div class="mt-1 text-sm">
-                          {{ selectedEvent.resource_type || "-" }} / {{ selectedEvent.resource_name || selectedEvent.resource_id || "-" }}
+                          {{ selectedEvent.resource_type || "-" }} /
+                          {{ selectedEvent.resource_name || selectedEvent.resource_id || "-" }}
                         </div>
                       </div>
                       <div>
@@ -262,10 +333,24 @@ function prettyJson(value: unknown) {
                           {{ selectedEvent.request_method || "-" }} {{ selectedEvent.request_path || "" }}
                         </div>
                       </div>
+                      <div>
+                        <div class="text-xs text-muted-foreground">{{ t("audit.requestId") }}</div>
+                        <div class="mt-1 break-all text-sm">
+                          {{ selectedEvent.request_id || t("audit.notAvailable") }}
+                        </div>
+                      </div>
+                      <div>
+                        <div class="text-xs text-muted-foreground">{{ t("audit.traceId") }}</div>
+                        <div class="mt-1 break-all text-sm">
+                          {{ selectedEvent.trace_id || t("audit.notAvailable") }}
+                        </div>
+                      </div>
                     </div>
                     <div>
                       <div class="text-xs text-muted-foreground">{{ t("audit.payload") }}</div>
-                      <pre class="mt-2 overflow-x-auto rounded-md border bg-muted/20 p-3 text-xs leading-5">{{ prettyJson(selectedEvent.payload) }}</pre>
+                      <pre class="mt-2 overflow-x-auto rounded-md border bg-muted/20 p-3 text-xs leading-5">{{
+                        prettyJson(selectedEvent.payload)
+                      }}</pre>
                     </div>
                   </div>
                   <div v-else class="px-6 py-8 text-sm text-muted-foreground">{{ t("audit.emptySelection") }}</div>
@@ -296,6 +381,15 @@ function prettyJson(value: unknown) {
                   />
                 </div>
                 <div class="space-y-1.5">
+                  <Label for="audit-query-database">{{ t("audit.database") }}</Label>
+                  <Input
+                    id="audit-query-database"
+                    v-model="queryFilters.databaseName"
+                    :placeholder="t('audit.databasePlaceholder')"
+                    @keydown.enter.prevent="loadActiveTab"
+                  />
+                </div>
+                <div class="space-y-1.5">
                   <Label>{{ t("audit.status") }}</Label>
                   <Select v-model="queryFilters.status">
                     <SelectTrigger><SelectValue :placeholder="t('audit.allStatuses')" /></SelectTrigger>
@@ -307,11 +401,13 @@ function prettyJson(value: unknown) {
                   </Select>
                 </div>
               </div>
-              <div class="mt-3 flex items-center gap-3">
+              <div class="mt-3 grid gap-3 md:grid-cols-4">
                 <div class="space-y-1.5">
                   <Label>{{ t("audit.operationType") }}</Label>
                   <Select v-model="queryFilters.operationType">
-                    <SelectTrigger class="w-[220px]"><SelectValue :placeholder="t('audit.allOperationTypes')" /></SelectTrigger>
+                    <SelectTrigger class="w-[220px]"
+                      ><SelectValue :placeholder="t('audit.allOperationTypes')"
+                    /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">{{ t("audit.allOperationTypes") }}</SelectItem>
                       <SelectItem value="interactive">interactive</SelectItem>
@@ -319,14 +415,45 @@ function prettyJson(value: unknown) {
                       <SelectItem value="batch">batch</SelectItem>
                       <SelectItem value="script">script</SelectItem>
                       <SelectItem value="transaction">transaction</SelectItem>
+                      <SelectItem value="internal_script">internal_script</SelectItem>
+                      <SelectItem value="internal_transaction">internal_transaction</SelectItem>
                       <SelectItem value="approval_execution">approval_execution</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <Button size="sm" class="mt-6 gap-1.5" @click="loadActiveTab">
-                  <Search class="h-3.5 w-3.5" />
-                  {{ t("audit.search") }}
-                </Button>
+                <div class="space-y-1.5">
+                  <Label for="audit-query-actor">{{ t("audit.actor") }}</Label>
+                  <Input
+                    id="audit-query-actor"
+                    v-model="queryFilters.actor"
+                    :placeholder="t('audit.actorPlaceholder')"
+                    @keydown.enter.prevent="loadActiveTab"
+                  />
+                </div>
+                <div class="space-y-1.5">
+                  <Label for="audit-query-request-id">{{ t("audit.requestId") }}</Label>
+                  <Input
+                    id="audit-query-request-id"
+                    v-model="queryFilters.requestId"
+                    :placeholder="t('audit.requestIdPlaceholder')"
+                    @keydown.enter.prevent="loadActiveTab"
+                  />
+                </div>
+                <div class="space-y-1.5">
+                  <Label for="audit-query-trace-id">{{ t("audit.traceId") }}</Label>
+                  <Input
+                    id="audit-query-trace-id"
+                    v-model="queryFilters.traceId"
+                    :placeholder="t('audit.traceIdPlaceholder')"
+                    @keydown.enter.prevent="loadActiveTab"
+                  />
+                </div>
+                <div class="flex items-end">
+                  <Button size="sm" class="gap-1.5" @click="loadActiveTab">
+                    <Search class="h-3.5 w-3.5" />
+                    {{ t("audit.search") }}
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -368,7 +495,9 @@ function prettyJson(value: unknown) {
                       <Badge variant="outline">{{ selectedQuery.execution_mode }}</Badge>
                     </div>
                     <div>
-                      <h3 class="text-lg font-semibold">{{ selectedQuery.sql_summary || t("audit.queryDetailTitle") }}</h3>
+                      <h3 class="text-lg font-semibold">
+                        {{ selectedQuery.sql_summary || t("audit.queryDetailTitle") }}
+                      </h3>
                       <p class="mt-1 text-sm text-muted-foreground">{{ formatDateTime(selectedQuery.created_at) }}</p>
                     </div>
                     <Separator />
@@ -390,7 +519,8 @@ function prettyJson(value: unknown) {
                       <div>
                         <div class="text-xs text-muted-foreground">{{ t("audit.database") }}</div>
                         <div class="mt-1 text-sm">
-                          {{ selectedQuery.database_name }}<span v-if="selectedQuery.schema_name"> / {{ selectedQuery.schema_name }}</span>
+                          {{ selectedQuery.database_name
+                          }}<span v-if="selectedQuery.schema_name"> / {{ selectedQuery.schema_name }}</span>
                         </div>
                       </div>
                       <div>
@@ -401,18 +531,41 @@ function prettyJson(value: unknown) {
                         <div class="text-xs text-muted-foreground">{{ t("audit.affectedRows") }}</div>
                         <div class="mt-1 text-sm">{{ selectedQuery.affected_rows ?? t("audit.notAvailable") }}</div>
                       </div>
+                      <div>
+                        <div class="text-xs text-muted-foreground">{{ t("audit.requestId") }}</div>
+                        <div class="mt-1 break-all text-sm">
+                          {{ selectedQuery.request_id || t("audit.notAvailable") }}
+                        </div>
+                      </div>
+                      <div>
+                        <div class="text-xs text-muted-foreground">{{ t("audit.traceId") }}</div>
+                        <div class="mt-1 break-all text-sm">
+                          {{ selectedQuery.trace_id || t("audit.notAvailable") }}
+                        </div>
+                      </div>
+                      <div v-if="selectedQuery.error_code">
+                        <div class="text-xs text-muted-foreground">{{ t("audit.errorCode") }}</div>
+                        <div class="mt-1 text-sm text-destructive">{{ selectedQuery.error_code }}</div>
+                      </div>
                     </div>
                     <div>
                       <div class="text-xs text-muted-foreground">{{ t("audit.sqlText") }}</div>
-                      <pre class="mt-2 overflow-x-auto rounded-md border bg-muted/20 p-3 text-xs leading-5">{{ selectedQuery.sql_text }}</pre>
+                      <pre class="mt-2 overflow-x-auto rounded-md border bg-muted/20 p-3 text-xs leading-5">{{
+                        selectedQuery.sql_text
+                      }}</pre>
                     </div>
                     <div>
                       <div class="text-xs text-muted-foreground">{{ t("audit.metadata") }}</div>
-                      <pre class="mt-2 overflow-x-auto rounded-md border bg-muted/20 p-3 text-xs leading-5">{{ prettyJson(selectedQuery.metadata) }}</pre>
+                      <pre class="mt-2 overflow-x-auto rounded-md border bg-muted/20 p-3 text-xs leading-5">{{
+                        prettyJson(selectedQuery.metadata)
+                      }}</pre>
                     </div>
                     <div v-if="selectedQuery.error_message">
                       <div class="text-xs text-muted-foreground">{{ t("audit.errorMessage") }}</div>
-                      <pre class="mt-2 overflow-x-auto rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs leading-5 text-destructive">{{ selectedQuery.error_message }}</pre>
+                      <pre
+                        class="mt-2 overflow-x-auto rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs leading-5 text-destructive"
+                        >{{ selectedQuery.error_message }}</pre
+                      >
                     </div>
                   </div>
                   <div v-else class="px-6 py-8 text-sm text-muted-foreground">{{ t("audit.emptySelection") }}</div>

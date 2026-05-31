@@ -12,6 +12,7 @@ from app.api.router import api_router
 from app.api.routes.web_runtime import router as web_runtime_router
 from app.config import get_settings
 from app.db.session import SessionLocal
+from app.middleware.audit_context import AuditContextMiddleware
 from app.services.approval import ApprovalService
 from app.services.auth import AuthService
 from app.services.authorization import AuthorizationService
@@ -39,6 +40,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.add_middleware(AuditContextMiddleware, auth_service_factory=lambda: AuthService(settings))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:1420", "http://127.0.0.1:1420", "http://localhost:8000", "http://localhost:4224"],

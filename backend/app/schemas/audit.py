@@ -20,6 +20,8 @@ class AuditEventResponse(BaseModel):
     actor_role: str | None
     source_ip: str | None
     user_agent: str | None
+    request_id: str | None
+    trace_id: str | None
     request_path: str | None
     request_method: str | None
     resource_type: str | None
@@ -40,6 +42,8 @@ class QueryAuditResponse(BaseModel):
     actor_role: str | None
     source_ip: str | None
     user_agent: str | None
+    request_id: str | None
+    trace_id: str | None
     request_path: str | None
     request_method: str | None
     datasource_id: str
@@ -89,6 +93,8 @@ class InternalQueryAuditCreateRequest(BaseModel):
     error_message: str | None = None
     source_ip: str | None = None
     user_agent: str | None = None
+    request_id: str | None = None
+    trace_id: str | None = None
     request_path: str | None = None
     request_method: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

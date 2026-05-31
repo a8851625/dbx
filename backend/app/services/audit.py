@@ -23,6 +23,8 @@ class AuditActor:
     role: str | None = None
     source_ip: str | None = None
     user_agent: str | None = None
+    request_id: str | None = None
+    trace_id: str | None = None
     request_path: str | None = None
     request_method: str | None = None
 
@@ -35,9 +37,12 @@ class AuditService:
         request: Request | None = None,
         source_ip: str | None = None,
         user_agent: str | None = None,
+        request_id: str | None = None,
+        trace_id: str | None = None,
         request_path: str | None = None,
         request_method: str | None = None,
     ) -> AuditActor:
+        request_state = getattr(request, "state", None)
         return AuditActor(
             user_id=user.id if user is not None else None,
             email=user.email if user is not None else None,
@@ -45,6 +50,8 @@ class AuditService:
             role=user.role if user is not None else None,
             source_ip=source_ip or self._source_ip(request),
             user_agent=user_agent or (request.headers.get("user-agent") if request is not None else None),
+            request_id=request_id or getattr(request_state, "request_id", None),
+            trace_id=trace_id or getattr(request_state, "trace_id", None),
             request_path=request_path or (str(request.url.path) if request is not None else None),
             request_method=request_method or (request.method if request is not None else None),
         )
@@ -76,6 +83,8 @@ class AuditService:
             actor_role=actor.role,
             source_ip=actor.source_ip,
             user_agent=actor.user_agent,
+            request_id=actor.request_id,
+            trace_id=actor.trace_id,
             request_path=actor.request_path,
             request_method=actor.request_method,
             resource_type=resource_type,
@@ -95,7 +104,7 @@ class AuditService:
         *,
         datasource_id: str,
         database_name: str,
-        sql_text: str,
+        sql_text: str | None = None,
         actor: AuditActor | None = None,
         schema_name: str | None = None,
         table_name: str | None = None,
@@ -121,6 +130,8 @@ class AuditService:
             actor_role=actor.role,
             source_ip=actor.source_ip,
             user_agent=actor.user_agent,
+            request_id=actor.request_id,
+            trace_id=actor.trace_id,
             request_path=actor.request_path,
             request_method=actor.request_method,
             datasource_id=datasource_id,
@@ -130,8 +141,8 @@ class AuditService:
             operation_type=operation_type,
             execution_mode=execution_mode,
             statement_count=max(statement_count, 1),
-            sql_text=self._trim_sql(sql_text),
-            sql_summary=self._summarize_sql(sql_text),
+            sql_text=self._trim_sql(sql_text or ""),
+            sql_summary=self._summarize_sql(sql_text or ""),
             status=status,
             duration_ms=duration_ms,
             affected_rows=affected_rows,
@@ -157,6 +168,8 @@ class AuditService:
         outcome: str | None = None,
         actor: str | None = None,
         resource_type: str | None = None,
+        request_id: str | None = None,
+        trace_id: str | None = None,
         keyword: str | None = None,
     ) -> tuple[list[AuditEvent], int]:
         stmt = select(AuditEvent)
@@ -169,6 +182,8 @@ class AuditService:
             outcome=outcome,
             actor=actor,
             resource_type=resource_type,
+            request_id=request_id,
+            trace_id=trace_id,
             keyword=keyword,
         )
         count_stmt = self._apply_event_filters(
@@ -178,6 +193,8 @@ class AuditService:
             outcome=outcome,
             actor=actor,
             resource_type=resource_type,
+            request_id=request_id,
+            trace_id=trace_id,
             keyword=keyword,
         )
 
@@ -198,6 +215,8 @@ class AuditService:
         status: str | None = None,
         operation_type: str | None = None,
         actor: str | None = None,
+        request_id: str | None = None,
+        trace_id: str | None = None,
         keyword: str | None = None,
     ) -> tuple[list[QueryAudit], int]:
         stmt = select(QueryAudit)
@@ -210,6 +229,8 @@ class AuditService:
             status=status,
             operation_type=operation_type,
             actor=actor,
+            request_id=request_id,
+            trace_id=trace_id,
             keyword=keyword,
         )
         count_stmt = self._apply_query_filters(
@@ -219,6 +240,8 @@ class AuditService:
             status=status,
             operation_type=operation_type,
             actor=actor,
+            request_id=request_id,
+            trace_id=trace_id,
             keyword=keyword,
         )
 
@@ -237,6 +260,8 @@ class AuditService:
         outcome: str | None,
         actor: str | None,
         resource_type: str | None,
+        request_id: str | None,
+        trace_id: str | None,
         keyword: str | None,
     ):
         if category:
@@ -256,6 +281,10 @@ class AuditService:
             )
         if resource_type:
             stmt = stmt.where(AuditEvent.resource_type == resource_type)
+        if request_id:
+            stmt = stmt.where(AuditEvent.request_id == request_id.strip())
+        if trace_id:
+            stmt = stmt.where(AuditEvent.trace_id == trace_id.strip())
         if keyword:
             like = f"%{keyword.strip()}%"
             stmt = stmt.where(
@@ -277,6 +306,8 @@ class AuditService:
         status: str | None,
         operation_type: str | None,
         actor: str | None,
+        request_id: str | None,
+        trace_id: str | None,
         keyword: str | None,
     ):
         if datasource_id:
@@ -296,6 +327,10 @@ class AuditService:
                     QueryAudit.actor_user_id.ilike(actor_like),
                 )
             )
+        if request_id:
+            stmt = stmt.where(QueryAudit.request_id == request_id.strip())
+        if trace_id:
+            stmt = stmt.where(QueryAudit.trace_id == trace_id.strip())
         if keyword:
             like = f"%{keyword.strip()}%"
             stmt = stmt.where(

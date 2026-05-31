@@ -44,6 +44,8 @@ def list_audit_events(
     outcome: str | None = Query(default=None),
     actor: str | None = Query(default=None),
     resource_type: str | None = Query(default=None),
+    request_id: str | None = Query(default=None),
+    trace_id: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
     _: UserIdentity = Depends(require_permission("audit.event.view")),
     db: Session = Depends(get_db),
@@ -58,6 +60,8 @@ def list_audit_events(
         outcome=outcome,
         actor=actor,
         resource_type=resource_type,
+        request_id=request_id,
+        trace_id=trace_id,
         keyword=keyword,
     )
     return AuditEventListResponse(items=[AuditEventResponse.model_validate(item) for item in items], total=total)
@@ -72,6 +76,8 @@ def list_query_audits(
     status_value: str | None = Query(default=None, alias="status"),
     operation_type: str | None = Query(default=None),
     actor: str | None = Query(default=None),
+    request_id: str | None = Query(default=None),
+    trace_id: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
     _: UserIdentity = Depends(require_permission("audit.event.view")),
     db: Session = Depends(get_db),
@@ -86,6 +92,8 @@ def list_query_audits(
         status=status_value,
         operation_type=operation_type,
         actor=actor,
+        request_id=request_id,
+        trace_id=trace_id,
         keyword=keyword,
     )
     return QueryAuditListResponse(items=[_serialize_query_audit(item) for item in items], total=total)
@@ -104,6 +112,8 @@ def ingest_internal_query_audit(
         user=context.user if context is not None else None,
         source_ip=payload.source_ip,
         user_agent=payload.user_agent,
+        request_id=payload.request_id,
+        trace_id=payload.trace_id,
         request_path=payload.request_path,
         request_method=payload.request_method,
     )
@@ -141,6 +151,8 @@ def _serialize_query_audit(item) -> QueryAuditResponse:
         actor_role=item.actor_role,
         source_ip=item.source_ip,
         user_agent=item.user_agent,
+        request_id=item.request_id,
+        trace_id=item.trace_id,
         request_path=item.request_path,
         request_method=item.request_method,
         datasource_id=item.datasource_id,

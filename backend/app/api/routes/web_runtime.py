@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_authorization_service, get_current_user, require_permission
@@ -265,6 +266,8 @@ def _filter_authorized_tables(
 
 
 def _runtime_error_to_http(exc: Exception) -> HTTPException:
+    if isinstance(exc, HTTPException):
+        return exc
     message = str(exc) or exc.__class__.__name__
     if isinstance(exc, QueryPolicyViolation):
         return HTTPException(
@@ -510,6 +513,66 @@ def _reject_policy_controlled_batch(
         "Batch execution is not allowed while row or column policies apply",
         summary=summary,
     )
+
+
+def _record_request_query_audit(
+    db: Session,
+    request: Request,
+    current_user: UserIdentity | None,
+    payload: dict[str, Any],
+    *,
+    operation_type: str,
+    statement_count: int,
+    status_value: str,
+    started_at: float,
+    result: dict[str, Any] | list[dict[str, Any]] | None = None,
+    error: Exception | None = None,
+    internal: bool = False,
+) -> None:
+    sql_text = _audit_sql_text(payload, operation_type)
+    audit_service = AuditService()
+    query_result = _query_result_summary(result)
+    audit_service.record_query(
+        db,
+        datasource_id=str(payload.get("connectionId") or ""),
+        database_name=str(payload.get("database") or ""),
+        schema_name=payload.get("schema"),
+        actor=audit_service.build_actor(user=current_user, request=request),
+        execution_id=payload.get("executionId"),
+        operation_type=operation_type,
+        execution_mode="internal" if internal else "immediate",
+        statement_count=statement_count,
+        sql_text=sql_text,
+        status=status_value,
+        duration_ms=int((time.perf_counter() - started_at) * 1000),
+        affected_rows=query_result.get("affected_rows"),
+        error_code=None if error is None else error.__class__.__name__,
+        error_message=None if error is None else str(error),
+        metadata={
+            "route": str(request.url.path),
+            "status_code": 200 if error is None else _runtime_error_to_http(error).status_code,
+            "result": query_result,
+        },
+    )
+    db.commit()
+
+
+def _audit_sql_text(payload: dict[str, Any], operation_type: str) -> str:
+    if operation_type in {"batch", "transaction", "internal_transaction"}:
+        return ";\n".join(str(item) for item in payload.get("statements") or [])
+    return str(payload.get("sql") or "")
+
+
+def _query_result_summary(result: dict[str, Any] | list[dict[str, Any]] | None) -> dict[str, Any]:
+    if result is None:
+        return {}
+    items = result if isinstance(result, list) else [result]
+    return {
+        "statement_results": len(items),
+        "affected_rows": sum(int(item.get("affected_rows") or 0) for item in items),
+        "row_count": sum(len(item.get("rows") or []) for item in items),
+        "truncated": any(bool(item.get("truncated")) for item in items),
+    }
 
 
 @router.get("/version")
@@ -1123,19 +1186,21 @@ def get_ddl(
 
 @router.post("/query/execute")
 def execute_query(
+    request: Request,
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
     authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
+    started_at = time.perf_counter()
     connection_id = str(payload.get("connectionId") or "")
     database = str(payload.get("database") or "")
     schema = payload.get("schema")
     sql = str(payload.get("sql") or "")
-    _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
-    config = _connection_or_400(db, connection_id, current_user.id)
-    _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
     try:
+        _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
+        config = _connection_or_400(db, connection_id, current_user.id)
+        _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
         policy_plan = query_runtime_service.build_query_policy_plan(
             authorization_service.build_access_context(db, current_user),
             config,
@@ -1163,20 +1228,7 @@ def execute_query(
             max_rows=payload.get("maxRows"),
             policy_plan=policy_plan,
         )
-        _record_query_audit(
-            db,
-            current_user=current_user,
-            connection_id=connection_id,
-            database=database,
-            schema=schema,
-            sql=policy_plan.sql,
-            statement_count=1,
-            status_value="succeeded",
-            duration_ms=result.get("execution_time_ms"),
-            affected_rows=result.get("affected_rows"),
-            metadata=_audit_metadata({"policy": result.get("policy")}),
-        )
-        _commit_audit(db)
+        _record_request_query_audit(db, request, current_user, payload, operation_type="interactive", statement_count=1, status_value="succeeded", started_at=started_at, result=result)
         return result
     except QueryPolicyViolation as exc:
         _record_policy_event(
@@ -1190,51 +1242,31 @@ def execute_query(
             summaries=[exc.summary],
             error=str(exc),
         )
-        _record_query_audit(
-            db,
-            current_user=current_user,
-            connection_id=connection_id,
-            database=database,
-            schema=schema,
-            sql=sql,
-            statement_count=1,
-            status_value="blocked",
-            error_message=str(exc),
-            metadata={"policy": exc.summary},
-        )
-        _commit_audit(db)
+        _record_request_query_audit(db, request, current_user, payload, operation_type="interactive", statement_count=1, status_value="blocked", started_at=started_at, error=exc)
         raise _runtime_error_to_http(exc) from exc
     except Exception as exc:
-        _record_query_audit(
-            db,
-            current_user=current_user,
-            connection_id=connection_id,
-            database=database,
-            schema=schema,
-            sql=sql,
-            statement_count=1,
-            status_value="failed",
-            error_message=str(exc),
-        )
-        _commit_audit(db)
+        status_value = "blocked" if isinstance(exc, HTTPException) and exc.status_code in {status.HTTP_403_FORBIDDEN, status.HTTP_409_CONFLICT} else "failed"
+        _record_request_query_audit(db, request, current_user, payload, operation_type="interactive", statement_count=1, status_value=status_value, started_at=started_at, error=exc)
         raise _runtime_error_to_http(exc) from exc
 
 
 @router.post("/query/execute-multi")
 def execute_multi(
+    request: Request,
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
     authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> list[dict[str, Any]]:
+    started_at = time.perf_counter()
     connection_id = str(payload.get("connectionId") or "")
     database = str(payload.get("database") or "")
     schema = payload.get("schema")
     sql = str(payload.get("sql") or "")
-    _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
-    config = _connection_or_400(db, connection_id, current_user.id)
-    _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
     try:
+        _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
+        config = _connection_or_400(db, connection_id, current_user.id)
+        _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
         policy_plans = _build_query_policy_plans(
             db=db,
             current_user=current_user,
@@ -1265,20 +1297,7 @@ def execute_multi(
             max_rows=payload.get("maxRows"),
             policy_plans=policy_plans,
         )
-        _record_query_audit(
-            db,
-            current_user=current_user,
-            connection_id=connection_id,
-            database=database,
-            schema=schema,
-            sql=";\n".join(plan.sql for plan in policy_plans),
-            statement_count=len(policy_plans),
-            status_value="succeeded",
-            duration_ms=sum(int(result.get("execution_time_ms") or 0) for result in results),
-            affected_rows=sum(int(result.get("affected_rows") or 0) for result in results),
-            metadata=_audit_metadata({"policy": [result.get("policy") for result in results if result.get("policy")]}),
-        )
-        _commit_audit(db)
+        _record_request_query_audit(db, request, current_user, payload, operation_type="multi", statement_count=len(policy_plans) or 1, status_value="succeeded", started_at=started_at, result=results)
         return results
     except QueryPolicyViolation as exc:
         _record_policy_event(
@@ -1292,63 +1311,43 @@ def execute_multi(
             summaries=[exc.summary],
             error=str(exc),
         )
-        _record_query_audit(
-            db,
-            current_user=current_user,
-            connection_id=connection_id,
-            database=database,
-            schema=schema,
-            sql=sql,
-            statement_count=max(len(query_runtime_service.split_sql(sql)), 1),
-            status_value="blocked",
-            error_message=str(exc),
-            metadata={"policy": exc.summary},
-        )
-        _commit_audit(db)
+        _record_request_query_audit(db, request, current_user, payload, operation_type="multi", statement_count=max(len(query_runtime_service.split_sql(sql)), 1), status_value="blocked", started_at=started_at, error=exc)
         raise _runtime_error_to_http(exc) from exc
     except Exception as exc:
-        _record_query_audit(
-            db,
-            current_user=current_user,
-            connection_id=connection_id,
-            database=database,
-            schema=schema,
-            sql=sql,
-            statement_count=max(len(query_runtime_service.split_sql(sql)), 1),
-            status_value="failed",
-            error_message=str(exc),
-        )
-        _commit_audit(db)
+        status_value = "blocked" if isinstance(exc, HTTPException) and exc.status_code in {status.HTTP_403_FORBIDDEN, status.HTTP_409_CONFLICT} else "failed"
+        _record_request_query_audit(db, request, current_user, payload, operation_type="multi", statement_count=max(len(query_runtime_service.split_sql(sql)), 1), status_value=status_value, started_at=started_at, error=exc)
         raise _runtime_error_to_http(exc) from exc
 
 
 @router.post("/query/execute-batch")
 def execute_batch(
+    request: Request,
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
     authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
+    started_at = time.perf_counter()
     connection_id = str(payload.get("connectionId") or "")
     database = str(payload.get("database") or "")
     schema = payload.get("schema")
     statements = list(payload.get("statements") or [])
-    _ensure_direct_query_allowed(
-        connection_id=connection_id,
-        database=database,
-        schema=schema,
-        sql="",
-        statements=statements,
-    )
-    config = _connection_or_400(db, connection_id, current_user.id)
-    _authorize_query_scope(
-        db,
-        authorization_service,
-        current_user,
-        payload,
-        sql=";\n".join(str(statement) for statement in statements),
-    )
     try:
+        _ensure_direct_query_allowed(
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql="",
+            statements=statements,
+        )
+        config = _connection_or_400(db, connection_id, current_user.id)
+        _authorize_query_scope(
+            db,
+            authorization_service,
+            current_user,
+            payload,
+            sql=";\n".join(str(statement) for statement in statements),
+        )
         _reject_policy_controlled_batch(
             db=db,
             current_user=current_user,
@@ -1360,32 +1359,38 @@ def execute_batch(
             sql=";\n".join(str(statement) for statement in statements),
             action="execute_batch",
         )
-        return query_runtime_service.execute_batch(
+        result = query_runtime_service.execute_batch(
             config,
             database=database,
             schema=schema,
             statements=statements,
             transactional=False,
         )
+        _record_request_query_audit(db, request, current_user, payload, operation_type="batch", statement_count=len(statements) or 1, status_value="succeeded", started_at=started_at, result=result)
+        return result
     except Exception as exc:
+        status_value = "blocked" if isinstance(exc, (HTTPException, QueryPolicyViolation)) else "failed"
+        _record_request_query_audit(db, request, current_user, payload, operation_type="batch", statement_count=len(statements) or 1, status_value=status_value, started_at=started_at, error=exc)
         raise _runtime_error_to_http(exc) from exc
 
 
 @router.post("/query/execute-script")
 def execute_script(
+    request: Request,
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
     authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
+    started_at = time.perf_counter()
     connection_id = str(payload.get("connectionId") or "")
     database = str(payload.get("database") or "")
     schema = payload.get("schema")
     sql = str(payload.get("sql") or "")
-    _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
-    config = _connection_or_400(db, connection_id, current_user.id)
-    _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
     try:
+        _ensure_direct_query_allowed(connection_id=connection_id, database=database, schema=schema, sql=sql)
+        config = _connection_or_400(db, connection_id, current_user.id)
+        _authorize_query_scope(db, authorization_service, current_user, payload, sql=sql)
         _reject_policy_controlled_batch(
             db=db,
             current_user=current_user,
@@ -1398,44 +1403,50 @@ def execute_script(
             action="execute_script",
         )
         statements = query_runtime_service.split_sql(sql)
-        return query_runtime_service.execute_batch(
+        result = query_runtime_service.execute_batch(
             config,
             database=database,
             schema=schema,
             statements=statements,
             transactional=False,
         )
+        _record_request_query_audit(db, request, current_user, payload, operation_type="script", statement_count=len(statements) or 1, status_value="succeeded", started_at=started_at, result=result)
+        return result
     except Exception as exc:
+        status_value = "blocked" if isinstance(exc, (HTTPException, QueryPolicyViolation)) else "failed"
+        _record_request_query_audit(db, request, current_user, payload, operation_type="script", statement_count=len(query_runtime_service.split_sql(sql)) or 1, status_value=status_value, started_at=started_at, error=exc)
         raise _runtime_error_to_http(exc) from exc
 
 
 @router.post("/query/execute-in-transaction")
 def execute_in_transaction(
+    request: Request,
     payload: dict[str, Any],
     current_user: UserIdentity = Depends(require_permission("query.execute")),
     db: Session = Depends(get_db),
     authorization_service: AuthorizationService = Depends(get_authorization_service),
 ) -> dict[str, Any]:
+    started_at = time.perf_counter()
     connection_id = str(payload.get("connectionId") or "")
     database = str(payload.get("database") or "")
     schema = payload.get("schema")
     statements = list(payload.get("statements") or [])
-    _ensure_direct_query_allowed(
-        connection_id=connection_id,
-        database=database,
-        schema=schema,
-        sql="",
-        statements=statements,
-    )
-    config = _connection_or_400(db, connection_id, current_user.id)
-    _authorize_query_scope(
-        db,
-        authorization_service,
-        current_user,
-        payload,
-        sql=";\n".join(str(statement) for statement in statements),
-    )
     try:
+        _ensure_direct_query_allowed(
+            connection_id=connection_id,
+            database=database,
+            schema=schema,
+            sql="",
+            statements=statements,
+        )
+        config = _connection_or_400(db, connection_id, current_user.id)
+        _authorize_query_scope(
+            db,
+            authorization_service,
+            current_user,
+            payload,
+            sql=";\n".join(str(statement) for statement in statements),
+        )
         _reject_policy_controlled_batch(
             db=db,
             current_user=current_user,
@@ -1447,14 +1458,18 @@ def execute_in_transaction(
             sql=";\n".join(str(statement) for statement in statements),
             action="execute_in_transaction",
         )
-        return query_runtime_service.execute_batch(
+        result = query_runtime_service.execute_batch(
             config,
             database=database,
             schema=schema,
             statements=statements,
             transactional=True,
         )
+        _record_request_query_audit(db, request, current_user, payload, operation_type="transaction", statement_count=len(statements) or 1, status_value="succeeded", started_at=started_at, result=result)
+        return result
     except Exception as exc:
+        status_value = "blocked" if isinstance(exc, (HTTPException, QueryPolicyViolation)) else "failed"
+        _record_request_query_audit(db, request, current_user, payload, operation_type="transaction", statement_count=len(statements) or 1, status_value=status_value, started_at=started_at, error=exc)
         raise _runtime_error_to_http(exc) from exc
 
 
@@ -1500,38 +1515,49 @@ def classify_execution_query(
 
 @router.post("/internal/query/execute-in-transaction", dependencies=[Depends(_internal_token_guard)])
 def execute_in_transaction_internal(
+    request: Request,
     payload: dict[str, Any],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    config = _connection_or_400(db, str(payload.get("connectionId") or ""))
+    statements = list(payload.get("statements") or [])
+    started_at = time.perf_counter()
     try:
-        return query_runtime_service.execute_batch(
+        config = _connection_or_400(db, str(payload.get("connectionId") or ""))
+        result = query_runtime_service.execute_batch(
             config,
             database=str(payload.get("database") or ""),
             schema=payload.get("schema"),
-            statements=list(payload.get("statements") or []),
+            statements=statements,
             transactional=True,
         )
+        _record_request_query_audit(db, request, None, payload, operation_type="internal_transaction", statement_count=len(statements) or 1, status_value="succeeded", started_at=started_at, result=result, internal=True)
+        return result
     except Exception as exc:
+        _record_request_query_audit(db, request, None, payload, operation_type="internal_transaction", statement_count=len(statements) or 1, status_value="failed", started_at=started_at, error=exc, internal=True)
         raise _runtime_error_to_http(exc) from exc
 
 
 @router.post("/internal/query/execute-script", dependencies=[Depends(_internal_token_guard)])
 def execute_script_internal(
+    request: Request,
     payload: dict[str, Any],
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    config = _connection_or_400(db, str(payload.get("connectionId") or ""))
+    started_at = time.perf_counter()
     try:
+        config = _connection_or_400(db, str(payload.get("connectionId") or ""))
         statements = query_runtime_service.split_sql(str(payload.get("sql") or ""))
-        return query_runtime_service.execute_batch(
+        result = query_runtime_service.execute_batch(
             config,
             database=str(payload.get("database") or ""),
             schema=payload.get("schema"),
             statements=statements,
             transactional=False,
         )
+        _record_request_query_audit(db, request, None, payload, operation_type="internal_script", statement_count=len(statements) or 1, status_value="succeeded", started_at=started_at, result=result, internal=True)
+        return result
     except Exception as exc:
+        _record_request_query_audit(db, request, None, payload, operation_type="internal_script", statement_count=len(query_runtime_service.split_sql(str(payload.get("sql") or ""))) or 1, status_value="failed", started_at=started_at, error=exc, internal=True)
         raise _runtime_error_to_http(exc) from exc
 
 
